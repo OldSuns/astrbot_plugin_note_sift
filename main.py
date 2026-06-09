@@ -25,7 +25,7 @@ except Exception:
 PLUGIN_NAME = "astrbot_plugin_note_sift"
 
 
-@register(PLUGIN_NAME, "OpenCode", "Grep-first Markdown knowledge vault for AstrBot", "0.1.0")
+@register(PLUGIN_NAME, "OldSun", "NoteSift - Grep-first Markdown/Obsidian knowledge base for AstrBot", "0.1.0")
 class NoteSiftPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
