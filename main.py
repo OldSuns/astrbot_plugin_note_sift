@@ -109,20 +109,19 @@ class NoteSiftPlugin(Star):
             yield event.plain_result("未找到已导入的知识库，无法重建。")
 
     @filter.llm_tool(name="kb_list_vaults")
-    async def kb_list_vaults(self, event: AstrMessageEvent):
+    async def kb_list_vaults(self, event: AstrMessageEvent) -> str:
         """列出所有可用的知识库。使用此工具获取可以在其他 kb_ 工具中使用的 vault_id。
 
         Returns: 返回可用知识库的 ID 列表和基本信息
         """
         if not self._is_allowed(event):
-            yield event.plain_result("Knowledge vault access denied for this session.")
-            return
+            return "Knowledge vault access denied for this session."
 
         vaults_info = self._get_available_vaults()
-        yield event.plain_result(format_tool_payload({"vaults": vaults_info}))
+        return format_tool_payload({"vaults": vaults_info})
 
     @filter.llm_tool(name="kb_discover")
-    async def kb_discover(self, event: AstrMessageEvent, query: str, limit: int = 5, regex: bool = False, vault_id: str = ""):
+    async def kb_discover(self, event: AstrMessageEvent, query: str, limit: int = 5, regex: bool = False, vault_id: str = "") -> str:
         """发现知识库候选笔记，先返回路径、标题、标签、别名、命中字段和必要短片段。
 
         Args:
@@ -133,8 +132,7 @@ class NoteSiftPlugin(Star):
                              提示：先使用 kb_list_vaults 工具获取可用的知识库 ID
         """
         if not self._is_allowed(event):
-            yield event.plain_result("Knowledge vault access denied for this session.")
-            return
+            return "Knowledge vault access denied for this session."
 
         # Validate limit parameter
         validated_limit = validate_int_param(limit, default=5, min_val=1, max_val=10)
@@ -146,10 +144,10 @@ class NoteSiftPlugin(Star):
             regex=bool(regex),
             vault_id=vault_id or None
         )
-        yield event.plain_result(format_tool_payload({"results": results}))
+        return format_tool_payload({"results": results})
 
     @filter.llm_tool(name="kb_read")
-    async def kb_read(self, event: AstrMessageEvent, note_ref: str, mode: str = "outline", heading: str = "", query: str = "", page: int = 1, vault_id: str = ""):
+    async def kb_read(self, event: AstrMessageEvent, note_ref: str, mode: str = "outline", heading: str = "", query: str = "", page: int = 1, vault_id: str = "") -> str:
         """读取知识库笔记。优先使用 outline 或 summary，再按 section 读取，full 可能因长度上限被拒绝或分页。
 
         Args:
@@ -162,8 +160,7 @@ class NoteSiftPlugin(Star):
                              提示：先使用 kb_list_vaults 工具获取可用的知识库 ID
         """
         if not self._is_allowed(event):
-            yield event.plain_result("Knowledge vault access denied for this session.")
-            return
+            return "Knowledge vault access denied for this session."
 
         # Validate page parameter
         validated_page = validate_int_param(page, default=1, min_val=1)
@@ -183,7 +180,7 @@ class NoteSiftPlugin(Star):
             query=query or None,
             page=validated_page
         )
-        yield event.plain_result(format_tool_payload(result))
+        return format_tool_payload(result)
 
     def _build_settings(self, vault_id: str = "default") -> VaultSettings:
         return VaultSettings(
