@@ -1,0 +1,8 @@
+name: astrbot_plugin_note_sift
+display_name: NoteSift
+desc: Grep-first Markdown/Obsidian knowledge sifter for AstrBot.
+version: v0.1.0
+author: OldSun
+repo: "oldsuns/astrbot_plugin_note_sift"
+icon: logo.png
+astrbot_version: ">=4.13.0"

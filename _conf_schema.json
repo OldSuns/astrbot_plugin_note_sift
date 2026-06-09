@@ -1,0 +1,45 @@
+{
+  "vault_zip": {
+    "type": "file",
+    "description": "上传知识库 zip 文件（可上传多个）",
+    "default": [],
+    "file_types": ["zip"]
+  },
+  "enable_acl": {
+    "type": "bool",
+    "description": "启用会话白名单",
+    "default": false
+  },
+  "allowed_sessions": {
+    "type": "text",
+    "description": "允许访问的 UMO，每行一个",
+    "default": ""
+  },
+  "default_read_mode": {
+    "type": "string",
+    "description": "默认读取模式",
+    "default": "outline",
+    "options": ["outline", "summary", "section", "snippets", "full"]
+  },
+  "full_over_limit_strategy": {
+    "type": "string",
+    "description": "内容超限策略：strict=拒绝 paged=分页 compressed=骨架",
+    "default": "strict",
+    "options": ["strict", "paged", "compressed"]
+  },
+  "compressed_section_preview_chars": {
+    "type": "int",
+    "description": "压缩模式预览字符数",
+    "default": 200
+  },
+  "max_read_chars": {
+    "type": "int",
+    "description": "单次读取最大字符数",
+    "default": 8000
+  },
+  "max_discover_snippet_chars": {
+    "type": "int",
+    "description": "搜索片段最大字符数",
+    "default": 300
+  }
+}
