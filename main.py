@@ -38,7 +38,7 @@ class NoteSiftPlugin(Star):
 
     @filter.command_group("kb")
     def kb(self):
-        pass
+        """知识库搜索/读取/管理命令组。支持多库隔离与全文检索。"""
 
     @kb.command("search")
     async def kb_search(self, event: AstrMessageEvent, query: str):
