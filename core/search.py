@@ -135,7 +135,15 @@ def search_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool
 
     # Determine which vaults to search
     if vault_id:
-        vault_dirs = [vaults_dir / vault_id] if (vaults_dir / vault_id).exists() else []
+        vault_path = vaults_dir / vault_id
+        if not vault_path.exists():
+            # List available vaults for helpful error message
+            available = [d.name for d in vaults_dir.iterdir() if d.is_dir()] if vaults_dir.exists() else []
+            raise ValueError(
+                f"Knowledge vault '{vault_id}' not found. "
+                f"Available vaults: {', '.join(available) if available else 'none'}"
+            )
+        vault_dirs = [vault_path]
     else:
         vault_dirs = [d for d in vaults_dir.iterdir() if d.is_dir()]
 

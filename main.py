@@ -108,6 +108,19 @@ class NoteSiftPlugin(Star):
         else:
             yield event.plain_result("未找到已导入的知识库，无法重建。")
 
+    @filter.llm_tool(name="kb_list_vaults")
+    async def kb_list_vaults(self, event: AstrMessageEvent):
+        """列出所有可用的知识库。使用此工具获取可以在其他 kb_ 工具中使用的 vault_id。
+
+        Returns: 返回可用知识库的 ID 列表和基本信息
+        """
+        if not self._is_allowed(event):
+            yield event.plain_result("Knowledge vault access denied for this session.")
+            return
+
+        vaults_info = self._get_available_vaults()
+        yield event.plain_result(format_tool_payload({"vaults": vaults_info}))
+
     @filter.llm_tool(name="kb_discover")
     async def kb_discover(self, event: AstrMessageEvent, query: str, limit: int = 5, regex: bool = False, vault_id: str = ""):
         """发现知识库候选笔记，先返回路径、标题、标签、别名、命中字段和必要短片段。
@@ -116,7 +129,8 @@ class NoteSiftPlugin(Star):
             query(string): 搜索关键词或正则表达式
             limit(number): 返回候选数量，默认 5
             regex(boolean): 是否按正则表达式搜索，默认 false
-            vault_id(string): 指定知识库 ID，留空则跨库搜索
+            vault_id(string): 指定知识库 ID，留空则跨库搜索。
+                             提示：先使用 kb_list_vaults 工具获取可用的知识库 ID
         """
         if not self._is_allowed(event):
             yield event.plain_result("Knowledge vault access denied for this session.")
@@ -144,7 +158,8 @@ class NoteSiftPlugin(Star):
             heading(string): section 模式下的标题关键词
             query(string): snippets 模式下的检索词
             page(number): paged 模式下的页码，默认 1
-            vault_id(string): 指定知识库 ID，留空则使用 note_ref 中的前缀或 default
+            vault_id(string): 指定知识库 ID，留空则使用 note_ref 中的前缀或 default。
+                             提示：先使用 kb_list_vaults 工具获取可用的知识库 ID
         """
         if not self._is_allowed(event):
             yield event.plain_result("Knowledge vault access denied for this session.")
@@ -308,6 +323,30 @@ class NoteSiftPlugin(Star):
         # Default vault
         return "default", note_ref
 
+    def _get_available_vaults(self) -> list[dict]:
+        """Get structured information about available vaults.
+
+        Returns:
+            List of vault information dictionaries with vault_id, has_manifest, and has_index
+        """
+        vaults_dir = self.data_dir / "vaults"
+        if not vaults_dir.exists():
+            return []
+
+        vault_dirs = [d for d in vaults_dir.iterdir() if d.is_dir()]
+        vaults_info = []
+
+        for vault_dir in sorted(vault_dirs):
+            vault_id = vault_dir.name
+            settings = self._build_settings(vault_id)
+            vaults_info.append({
+                "vault_id": vault_id,
+                "has_manifest": settings.manifest_path.exists(),
+                "has_index": settings.index_path.exists(),
+            })
+
+        return vaults_info
+
     def _status_text(self) -> str:
         vaults_dir = self.data_dir / "vaults"
         if not vaults_dir.exists():
@@ -316,20 +355,18 @@ class NoteSiftPlugin(Star):
         lines = ["NoteSift 状态"]
         lines.append(f"数据目录: {self.data_dir}")
 
-        vault_dirs = [d for d in vaults_dir.iterdir() if d.is_dir()]
-        if not vault_dirs:
+        vaults_info = self._get_available_vaults()
+        if not vaults_info:
             lines.append("未找到知识库")
             return "\n".join(lines)
 
-        for vault_dir in sorted(vault_dirs):
-            vault_id = vault_dir.name
+        for vault in vaults_info:
+            vault_id = vault["vault_id"]
             settings = self._build_settings(vault_id)
-            manifest_exists = settings.manifest_path.exists()
-            index_exists = settings.index_path.exists()
 
             lines.append(f"\n[{vault_id}]")
-            lines.append(f"  manifest: {'存在' if manifest_exists else '不存在'}")
-            lines.append(f"  index: {'存在' if index_exists else '不存在'}")
+            lines.append(f"  manifest: {'存在' if vault['has_manifest'] else '不存在'}")
+            lines.append(f"  index: {'存在' if vault['has_index'] else '不存在'}")
             lines.append(f"  files: {settings.files_dir}")
 
         return "\n".join(lines)
