@@ -28,3 +28,7 @@ data/
 .env
 venv/
 .venv/
+
+# Vibe Files
+AGENTS.md
+.claude/
