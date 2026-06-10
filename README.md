@@ -18,7 +18,7 @@
   - `section` — 按标题读取指定章节
   - `snippets` — 查询相关正文片段
   - `full` — 完整正文（支持 strict/paged/compressed 三种超限策略）
-- **LLM 工具** — 提供 `kb_discover` 和 `kb_read` 函数工具
+- **LLM 工具** — 提供 `kb_list_vaults`、`kb_discover` 和 `kb_read` 函数工具
 - **跨库搜索** — 单次搜索覆盖所有或指定知识库
 - **Obsidian 自动识别** — 自动检测 `.obsidian` 目录并提取 vault 根路径
 - **前置元数据解析** — 自动提取 tags、aliases、links
@@ -117,18 +117,39 @@ plugin_data/astrbot_plugin_note_sift/
 ### kb_discover
 
 ```python
-kb_discover(query="川崎病", limit=5, regex=false, vault_id="")
+kb_discover(query="川崎病", limit=5, regex=false, vault_id="", verbose=false)
 ```
 
 - `query` — 搜索关键词或正则表达式
 - `limit` — 返回候选数量（默认 5，最大 10）
 - `regex` — 是否按正则搜索
 - `vault_id` — 指定知识库 ID，留空跨库搜索
+- `verbose` — 是否返回 `score`、`tags`、`aliases` 等调试字段，默认关闭
+
+默认返回精简字段，便于后续直接读取：
+
+```json
+{
+  "results": [
+    {
+      "rank": 1,
+      "ref": "medical:8f521aac31ee8784",
+      "vault_id": "medical",
+      "note_id": "8f521aac31ee8784",
+      "path": "儿科学/川崎病.md",
+      "title": "川崎病",
+      "matched": ["title", "tags", "path"]
+    }
+  ]
+}
+```
+
+`snippets` 只有非空时才返回；`verbose=true` 时额外返回 `score`、`tags`、`aliases`。
 
 ### kb_read
 
 ```python
-kb_read(note_ref="medical:kawasaki.md", mode="outline", heading="", query="", page=1, vault_id="")
+kb_read(note_ref="medical:kawasaki.md", mode="outline", heading="", query="", page=1, vault_id="", verbose=false)
 ```
 
 - `note_ref` — note_id 或路径
@@ -137,6 +158,65 @@ kb_read(note_ref="medical:kawasaki.md", mode="outline", heading="", query="", pa
 - `query` — snippets 模式下的检索词
 - `page` — paged 模式下的页码
 - `vault_id` — 指定知识库 ID，留空从 note_ref 前缀推断
+- `verbose` — 是否返回 `tags`、`aliases` 等元数据，默认关闭
+
+默认返回精简字段，并提供稳定读取引用 `ref`：
+
+```json
+{
+  "found": true,
+  "ref": "medical:8f521aac31ee8784",
+  "vault_id": "medical",
+  "note_id": "8f521aac31ee8784",
+  "path": "儿科学/川崎病.md",
+  "title": "川崎病",
+  "mode": "outline",
+  "headings": [
+    {"level": 1, "title": "川崎病"},
+    {"level": 2, "title": "治疗"}
+  ]
+}
+```
+
+`section` 模式会返回实际选中的标题：
+
+```json
+{
+  "found": true,
+  "ref": "medical:8f521aac31ee8784",
+  "vault_id": "medical",
+  "note_id": "8f521aac31ee8784",
+  "path": "儿科学/川崎病.md",
+  "title": "川崎病",
+  "mode": "section",
+  "heading": {"level": 2, "title": "治疗"},
+  "content": "IVIG 是核心治疗。"
+}
+```
+
+如果 `heading` 未命中，`section` 不会回退到第一个标题，而是返回可重试的错误报告；`available_headings` 只包含 `level <= 3` 的标题：
+
+```json
+{
+  "found": false,
+  "error": "heading not found",
+  "ref": "medical:8f521aac31ee8784",
+  "vault_id": "medical",
+  "note_id": "8f521aac31ee8784",
+  "path": "儿科学/川崎病.md",
+  "title": "川崎病",
+  "mode": "section",
+  "requested_heading": "不存在的标题",
+  "available_headings": [
+    {"level": 1, "title": "川崎病"},
+    {"level": 2, "title": "治疗"}
+  ]
+}
+```
+
+`full` 在 strict 策略下超限时不返回正文，只返回结构索引和 `truncated=true`；为控制工具输出长度，超限时的 `headings` 只包含 `level <= 3`，`outline` 模式仍返回完整标题树。
+
+空字段不会输出；`truncated`、`next_action_hint` 只在需要时返回；`verbose=true` 时额外返回 `tags`、`aliases`。
 
 ## 示例
 

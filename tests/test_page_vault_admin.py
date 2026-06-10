@@ -107,9 +107,176 @@ class PageVaultAdminTest(unittest.TestCase):
         self.assertEqual(payload["title"], "期末考试范围")
         self.assertFalse((plugin.data_dir / "vaults" / "default").exists())
 
-    def _make_plugin(self):
+    def test_kb_discover_returns_compact_results_by_default(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(
+            zip_path,
+            {"口腔医学/0.期末考试范围.md": "# 口腔医学期末考试复习范围\n\n牙体牙髓重点"},
+        )
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(plugin.kb_discover(event, query="口腔", limit=5))
+
+        item = json.loads(result)["results"][0]
+        self.assertEqual(item["rank"], 1)
+        self.assertEqual(item["ref"], f"临床医学:{item['note_id']}")
+        self.assertEqual(item["vault_id"], "临床医学")
+        self.assertEqual(item["path"], "口腔医学/0.期末考试范围.md")
+        self.assertEqual(item["title"], "口腔医学期末考试复习范围")
+        self.assertIn("title", item["matched"])
+        self.assertNotIn("matched_fields", item)
+        self.assertNotIn("score", item)
+        self.assertNotIn("tags", item)
+        self.assertNotIn("aliases", item)
+        self.assertNotIn("source_ref", item)
+        self.assertNotIn("snippets", item)
+
+    def test_kb_discover_verbose_keeps_debug_fields(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(
+            zip_path,
+            {"口腔医学/0.期末考试范围.md": "---\ntags:\n  - 口腔医学\naliases:\n  - 口腔复习\n---\n\n# 期末考试范围\n\n牙体牙髓重点"},
+        )
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(plugin.kb_discover(event, query="牙髓", limit=5, verbose=True))
+
+        item = json.loads(result)["results"][0]
+        self.assertIn("score", item)
+        self.assertEqual(item["tags"], ["口腔医学"])
+        self.assertEqual(item["aliases"], ["口腔复习"])
+        self.assertIn("snippets", item)
+        self.assertNotIn("matched_fields", item)
+        self.assertNotIn("source_ref", item)
+
+    def test_kb_read_returns_compact_outline_by_default(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(
+            zip_path,
+            {"口腔医学/0.期末考试范围.md": "---\ntags:\n  - 口腔医学\naliases:\n  - 口腔复习\n---\n\n# 期末考试范围\n\n## 重点章节\n牙体牙髓重点"},
+        )
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(
+            plugin.kb_read(event, note_ref="口腔医学/0.期末考试范围.md", mode="outline")
+        )
+
+        payload = json.loads(result)
+        self.assertTrue(payload["found"])
+        self.assertEqual(payload["ref"], f"临床医学:{payload['note_id']}")
+        self.assertEqual(payload["vault_id"], "临床医学")
+        self.assertEqual(payload["mode"], "outline")
+        self.assertIn("headings", payload)
+        self.assertNotIn("tags", payload)
+        self.assertNotIn("aliases", payload)
+        self.assertNotIn("source_ref", payload)
+        self.assertNotIn("content", payload)
+        self.assertNotIn("truncated", payload)
+        self.assertNotIn("next_action_hint", payload)
+
+    def test_kb_read_verbose_keeps_metadata(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(
+            zip_path,
+            {"口腔医学/0.期末考试范围.md": "---\ntags:\n  - 口腔医学\naliases:\n  - 口腔复习\n---\n\n# 期末考试范围\n\n正文"},
+        )
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(
+            plugin.kb_read(event, note_ref="口腔医学/0.期末考试范围.md", mode="outline", verbose=True)
+        )
+
+        payload = json.loads(result)
+        self.assertEqual(payload["tags"], ["口腔医学"])
+        self.assertEqual(payload["aliases"], ["口腔复习"])
+        self.assertNotIn("source_ref", payload)
+
+    def test_kb_read_section_reports_heading_match(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(
+            zip_path,
+            {"口腔医学/0.期末考试范围.md": "# 期末考试范围\n\n## 重点章节\n牙体牙髓重点\n\n## 其他\n内容"},
+        )
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(
+            plugin.kb_read(event, note_ref="口腔医学/0.期末考试范围.md", mode="section", heading="重点")
+        )
+
+        payload = json.loads(result)
+        self.assertTrue(payload["heading_matched"])
+        self.assertEqual(payload["heading"]["title"], "重点章节")
+        self.assertIn("牙体牙髓重点", payload["content"])
+        self.assertNotIn("headings", payload)
+
+    def test_kb_read_section_reports_heading_not_found(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(
+            zip_path,
+            {"口腔医学/0.期末考试范围.md": "# 期末考试范围\n\n## 重点章节\n牙体牙髓重点\n\n#### 细节\n内容"},
+        )
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(
+            plugin.kb_read(event, note_ref="口腔医学/0.期末考试范围.md", mode="section", heading="不存在")
+        )
+
+        payload = json.loads(result)
+        self.assertFalse(payload["found"])
+        self.assertEqual(payload["error"], "heading not found")
+        self.assertEqual(payload["ref"], f"临床医学:{payload['note_id']}")
+        self.assertEqual(payload["vault_id"], "临床医学")
+        self.assertEqual(payload["mode"], "section")
+        self.assertEqual(payload["requested_heading"], "不存在")
+        self.assertEqual(
+            [heading["title"] for heading in payload["available_headings"]],
+            ["期末考试范围", "重点章节"],
+        )
+        self.assertNotIn("content", payload)
+
+    def test_kb_read_full_over_limit_returns_headings_up_to_level_three(self):
+        plugin = self._make_plugin(config={"max_read_chars": 40})
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(
+            zip_path,
+            {
+                "口腔医学/0.期末考试范围.md": "# 期末考试范围\n\n## 二级\n" + "x" * 80 + "\n\n### 三级\n内容\n\n#### 四级\n细节",
+            },
+        )
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(
+            plugin.kb_read(event, note_ref="口腔医学/0.期末考试范围.md", mode="full", vault_id="临床医学")
+        )
+
+        payload = json.loads(result)
+        self.assertTrue(payload["truncated"])
+        self.assertEqual([heading["level"] for heading in payload["headings"]], [1, 2, 3])
+        self.assertEqual([heading["title"] for heading in payload["headings"]], ["期末考试范围", "二级", "三级"])
+
+    def _make_plugin(self, config=None):
         context = types.SimpleNamespace(register_web_api=lambda *_args, **_kwargs: None)
-        plugin = self.module.NoteSiftPlugin(context, {})
+        plugin = self.module.NoteSiftPlugin(context, config or {})
         plugin.data_dir = self.tmp_path / "data"
         return plugin
 

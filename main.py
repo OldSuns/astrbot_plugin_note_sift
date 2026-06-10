@@ -162,8 +162,8 @@ class NoteSiftPlugin(Star):
         return format_tool_payload({"vaults": vaults_info})
 
     @filter.llm_tool(name="kb_discover")
-    async def kb_discover(self, event: AstrMessageEvent, query: str, limit: int = 5, regex: bool = False, vault_id: str = "") -> str:
-        """发现知识库候选笔记，先返回路径、标题、标签、别名、命中字段和必要短片段。
+    async def kb_discover(self, event: AstrMessageEvent, query: str, limit: int = 5, regex: bool = False, vault_id: str = "", verbose: bool = False) -> str:
+        """发现知识库候选笔记，默认返回精简字段；verbose=true 时返回调试字段。
 
         Args:
             query(string): 搜索关键词或正则表达式
@@ -171,6 +171,7 @@ class NoteSiftPlugin(Star):
             regex(boolean): 是否按正则表达式搜索，默认 false
             vault_id(string): 指定知识库 ID，留空则跨库搜索。
                              提示：先使用 kb_list_vaults 工具获取可用的知识库 ID
+            verbose(boolean): 是否返回 score、tags、aliases 等调试字段，默认 false
         """
         if not self._is_allowed(event):
             return "Knowledge vault access denied for this session."
@@ -185,10 +186,10 @@ class NoteSiftPlugin(Star):
             regex=bool(regex),
             vault_id=vault_id or None
         )
-        return format_tool_payload({"results": results})
+        return format_tool_payload({"results": format_discover_results(results, verbose=bool(verbose))})
 
     @filter.llm_tool(name="kb_read")
-    async def kb_read(self, event: AstrMessageEvent, note_ref: str, mode: str = "outline", heading: str = "", query: str = "", page: int = 1, vault_id: str = "") -> str:
+    async def kb_read(self, event: AstrMessageEvent, note_ref: str, mode: str = "outline", heading: str = "", query: str = "", page: int = 1, vault_id: str = "", verbose: bool = False) -> str:
         """读取知识库笔记。优先使用 outline 或 summary，再按 section 读取，full 可能因长度上限被拒绝或分页。
 
         Args:
@@ -197,8 +198,9 @@ class NoteSiftPlugin(Star):
             heading(string): section 模式下的标题关键词
             query(string): snippets 模式下的检索词
             page(number): paged 模式下的页码，默认 1
-            vault_id(string): 指定知识库 ID，留空则使用 note_ref 中的前缀或 default。
+            vault_id(string): 指定知识库 ID，留空则使用 note_ref 中的前缀或跨库解析。
                              提示：先使用 kb_list_vaults 工具获取可用的知识库 ID
+            verbose(boolean): 是否返回 tags、aliases 等元数据，默认 false
         """
         if not self._is_allowed(event):
             return "Knowledge vault access denied for this session."
@@ -213,16 +215,17 @@ class NoteSiftPlugin(Star):
         settings = self._build_settings(target_vault)
         reader = VaultReader(settings)
 
+        read_mode = mode or "outline"
         result = reader.read_note(
             note_ref,
-            mode=mode or "outline",
+            mode=read_mode,
             heading=heading or None,
             query=query or None,
             page=validated_page
         )
         if result.get("found"):
             result["vault_id"] = target_vault
-        return format_tool_payload(result)
+        return format_tool_payload(format_read_result(result, target_vault, read_mode, verbose=bool(verbose)))
 
     def _build_settings(self, vault_id: str = "default") -> VaultSettings:
         return VaultSettings(
@@ -709,6 +712,85 @@ def format_tool_payload(payload: Any) -> str:
     import json
 
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def format_discover_results(results: list[dict[str, Any]], verbose: bool = False) -> list[dict[str, Any]]:
+    formatted = []
+    for rank, item in enumerate(results, start=1):
+        vault_id = item.get("vault_id", "")
+        note_id = item.get("note_id", "")
+        output = {
+            "rank": rank,
+            "ref": f"{vault_id}:{note_id}" if vault_id and note_id else note_id,
+            "vault_id": vault_id,
+            "note_id": note_id,
+            "path": item.get("path", ""),
+            "title": item.get("title", ""),
+            "matched": item.get("matched_fields", []),
+        }
+        snippets = [snippet for snippet in item.get("snippets", []) if snippet]
+        if snippets:
+            output["snippets"] = snippets
+        if verbose:
+            output["score"] = item.get("score", 0)
+            output["tags"] = item.get("tags", [])
+            output["aliases"] = item.get("aliases", [])
+        formatted.append(output)
+    return formatted
+
+
+def format_read_result(result: dict[str, Any], vault_id: str, mode: str, verbose: bool = False) -> dict[str, Any]:
+    if not result.get("found") and not result.get("note_id"):
+        return result
+
+    note_id = result.get("note_id", "")
+    output = {
+        "found": bool(result.get("found")),
+        "ref": f"{vault_id}:{note_id}" if vault_id and note_id else note_id,
+        "vault_id": vault_id,
+        "note_id": note_id,
+        "path": result.get("path", ""),
+        "title": result.get("title", ""),
+        "mode": mode,
+    }
+
+    content = result.get("content")
+    if content:
+        output["content"] = content
+    if mode == "outline" or result.get("truncated"):
+        headings = result.get("headings", [])
+        if result.get("truncated") and mode == "full":
+            headings = compact_headings(headings)
+        if headings:
+            output["headings"] = headings
+    if mode == "section":
+        if "heading" in result:
+            output["heading"] = result.get("heading")
+        if "heading_matched" in result:
+            output["heading_matched"] = result.get("heading_matched")
+        if result.get("requested_heading"):
+            output["requested_heading"] = result["requested_heading"]
+        if result.get("available_headings") is not None:
+            output["available_headings"] = compact_headings(result.get("available_headings", []))
+    if mode == "snippets" and result.get("content"):
+        output["query"] = result.get("query", "")
+    if result.get("page_info"):
+        output["page_info"] = result["page_info"]
+    if result.get("truncated"):
+        output["truncated"] = True
+    if result.get("next_action_hint"):
+        output["next_action_hint"] = result["next_action_hint"]
+    if result.get("error"):
+        output["error"] = result["error"]
+    if verbose:
+        output["tags"] = result.get("tags", [])
+        output["aliases"] = result.get("aliases", [])
+
+    return output
+
+
+def compact_headings(headings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [heading for heading in headings if heading.get("level", 0) <= 3]
 
 
 def manifest_summary(manifest: Any) -> dict[str, Any]:

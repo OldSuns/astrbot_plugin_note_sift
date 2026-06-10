@@ -37,7 +37,16 @@ class VaultReader:
             base["content"] = extract_callouts(body)
             return base
         if mode == "section":
-            base["content"] = extract_section(body, headings, heading)
+            section = select_section(body, headings, heading)
+            if section.get("heading_not_found"):
+                base["found"] = False
+                base["error"] = "heading not found"
+                base["requested_heading"] = section.get("requested_heading", "")
+                base["available_headings"] = section.get("available_headings", [])
+                return base
+            base["content"] = section["content"]
+            base["heading"] = section["heading"]
+            base["heading_matched"] = section["heading_matched"]
             return base
         if mode == "snippets":
             base["content"] = make_snippet(body, query or note["title"], self.settings.max_read_chars)
@@ -104,18 +113,53 @@ def extract_callouts(body: str) -> str:
 
 
 def extract_section(body: str, headings: list[dict], heading: str | None) -> str:
+    return select_section(body, headings, heading)["content"]
+
+
+def select_section(body: str, headings: list[dict], heading: str | None) -> dict:
     if not headings:
-        return body
+        if heading:
+            return {
+                "content": "",
+                "heading": None,
+                "heading_matched": False,
+                "heading_not_found": True,
+                "requested_heading": heading,
+                "available_headings": [],
+            }
+        return {"content": body, "heading": None, "heading_matched": False}
     selected = None
+    heading_matched = False
     if heading:
         for item in headings:
             if heading.lower() in item["title"].lower():
                 selected = item
+                heading_matched = True
                 break
+        if selected is None:
+            return {
+                "content": "",
+                "heading": None,
+                "heading_matched": False,
+                "heading_not_found": True,
+                "requested_heading": heading,
+                "available_headings": compact_headings(headings),
+            }
     if selected is None:
         selected = headings[0]
     lines = body.splitlines()
-    return "\n".join(lines[selected["line_start"] - 1 : selected["line_end"]]).strip()
+    return {
+        "content": "\n".join(lines[selected["line_start"] - 1 : selected["line_end"]]).strip(),
+        "heading": {
+            "level": selected["level"],
+            "title": selected["title"],
+        },
+        "heading_matched": heading_matched,
+    }
+
+
+def compact_headings(headings: list[dict]) -> list[dict]:
+    return [heading for heading in headings if heading.get("level", 0) <= 3]
 
 
 def paginate_content(body: str, page_size: int) -> list[str]:
