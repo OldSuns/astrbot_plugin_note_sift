@@ -5,6 +5,7 @@ import shutil
 import time
 import zipfile
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from .config import VaultSettings
@@ -24,6 +25,7 @@ class ImportManifest:
     file_count: int
     ignored_count: int
     fts_available: bool
+    imported_at: str
     vault_root: str = ""
 
 
@@ -38,6 +40,7 @@ class VaultImporter:
             raise ImportErrorInfo(f"files directory not found: {files_dir}")
 
         import_id = str(int(time.time() * 1000))
+        imported_at = current_timestamp()
         tmp_dir = self.settings.data_dir / "tmp_rebuild" / import_id
         staging_index = tmp_dir / "index.sqlite3"
         final_index = self.settings.index_path
@@ -79,6 +82,7 @@ class VaultImporter:
                 file_count=file_count,
                 ignored_count=0,  # Not applicable for rebuild
                 fts_available=VaultIndex(final_index, self.settings.vault_id).fts_available(),
+                imported_at=imported_at,
                 vault_root="",
             )
             self.settings.manifest_path.write_text(
@@ -100,6 +104,7 @@ class VaultImporter:
             raise ImportErrorInfo(f"zip file not found: {zip_path}")
         zip_hash = sha1_file(zip_path)
         import_id = str(int(time.time() * 1000))
+        imported_at = current_timestamp()
         tmp_dir = self.settings.data_dir / "tmp_import" / import_id
         staging_files = tmp_dir / "files"
         staging_index = tmp_dir / "index.sqlite3"
@@ -139,6 +144,7 @@ class VaultImporter:
                 file_count=file_count,
                 ignored_count=ignored_count,
                 fts_available=VaultIndex(final_index, self.settings.vault_id).fts_available(),
+                imported_at=imported_at,
                 vault_root=vault_root,
             )
             self.settings.manifest_path.write_text(
@@ -205,6 +211,10 @@ def sha1_file(path: Path) -> str:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def current_timestamp() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def extract_vault_id_from_path(path: Path) -> str:

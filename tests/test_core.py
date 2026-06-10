@@ -3,6 +3,7 @@ import sqlite3
 import sys
 import unittest
 import zipfile
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -63,9 +64,12 @@ class CoreTest(unittest.TestCase):
 
         self.assertEqual(manifest.file_count, 1)
         self.assertEqual(manifest.ignored_count, 1)
+        self.assertTrue(manifest.imported_at)
         self.assertFalse(zip_path.exists())
         self.assertTrue((settings.vault_dir / "files" / "儿科学" / "川崎病.md").exists())
         self.assertFalse((settings.vault_dir / "files" / "image.png").exists())
+        manifest_data = json.loads(settings.manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest_data["imported_at"], manifest.imported_at)
 
         db = sqlite3.connect(settings.index_path)
         try:

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NoteSift 管理</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="/api/plugin/page/bridge-sdk.js"></script>
+</head>
+<body>
+  <div id="toastContainer" class="toast-container"></div>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>NoteSift</h2>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#dashboard" class="nav-item active" data-view="dashboard">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          控制面板
+        </a>
+        <a href="#vault" class="nav-item" data-view="vault">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+          </svg>
+          知识库管理
+        </a>
+        <a href="#settings" class="nav-item" data-view="settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+          设置
+        </a>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <!-- Dashboard View -->
+      <div id="dashboardView" class="view active">
+        <header class="header">
+          <h1>知识库概览</h1>
+          <button class="btn btn-secondary" id="refreshBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+            刷新
+          </button>
+        </header>
+
+        <div id="stats" class="stats"></div>
+        <div class="search-section">
+          <input type="text" id="searchInput" class="search-input" placeholder="搜索知识库...">
+          <p class="search-hint">💡 提示：使用 /kb search 命令进行全文搜索</p>
+        </div>
+        <div id="vaultList" class="vault-list"></div>
+      </div>
+
+      <!-- Vault Management View -->
+      <div id="vaultView" class="view">
+        <header class="header">
+          <div>
+            <h1>知识库管理</h1>
+            <p class="header-subtitle">上传 zip、重建索引或删除不再需要的 vault。</p>
+          </div>
+          <button class="btn btn-secondary" id="vaultRefreshBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+            刷新
+          </button>
+        </header>
+
+        <section class="manager-grid">
+          <div class="form-section upload-card">
+            <h2>导入知识库</h2>
+            <div class="upload-drop" id="uploadDrop">
+              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              <strong id="selectedFileName">选择或拖入 zip 文件</strong>
+              <span>仅导入 .md / .markdown / .txt，成功后临时 zip 会被删除。</span>
+              <input type="file" id="zipFileInput" accept=".zip" hidden>
+            </div>
+            <div class="form-group">
+              <label for="vaultIdInput">vault_id（可选）</label>
+              <input type="text" id="vaultIdInput" placeholder="留空则使用 zip 文件名自动生成">
+              <small>允许字母、数字、下划线、短横线或中文。</small>
+            </div>
+            <button class="btn btn-primary" id="importVaultBtn">上传并导入</button>
+          </div>
+
+          <div class="form-section vault-help-card">
+            <h2>操作说明</h2>
+            <p>重建索引会复用已解压的 files 目录，不需要原始 zip。</p>
+            <p>删除 vault 只会删除插件数据目录下对应的 vault，不会修改 AstrBot 插件配置。</p>
+          </div>
+        </section>
+
+        <div id="vaultManagerList" class="vault-manager-list"></div>
+      </div>
+
+      <!-- Settings View -->
+      <div id="settingsView" class="view">
+        <header class="header">
+          <h1>插件设置</h1>
+          <button class="btn btn-primary" id="saveBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            保存设置
+          </button>
+        </header>
+
+        <div id="loadingState" class="loading">
+          <div class="spinner"></div>
+          <p>加载配置中...</p>
+        </div>
+
+        <form id="settingsForm" style="display: none;">
+          <div class="form-section">
+            <h2>搜索设置</h2>
+            <div class="form-group">
+              <label for="maxDiscoverSnippetChars">搜索片段最大字符数</label>
+              <input type="number" id="maxDiscoverSnippetChars" name="max_discover_snippet_chars" min="100" max="1000">
+              <small>搜索结果中显示的正文片段长度</small>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h2>读取设置</h2>
+            <div class="form-group">
+              <label for="defaultReadMode">默认读取模式</label>
+              <select id="defaultReadMode" name="default_read_mode">
+                <option value="outline">Outline - 元数据 + 标题树</option>
+                <option value="summary">Summary - 提取标注块</option>
+                <option value="full">Full - 完整正文</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="maxReadChars">单次读取最大字符数</label>
+              <input type="number" id="maxReadChars" name="max_read_chars" min="1000" max="50000">
+            </div>
+            <div class="form-group">
+              <label for="fullOverLimitStrategy">内容超限策略</label>
+              <select id="fullOverLimitStrategy" name="full_over_limit_strategy">
+                <option value="strict">Strict - 严格限制</option>
+                <option value="paged">Paged - 分页返回</option>
+                <option value="compressed">Compressed - 压缩章节</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="compressedSectionPreviewChars">压缩模式预览字符数</label>
+              <input type="number" id="compressedSectionPreviewChars" name="compressed_section_preview_chars" min="50" max="500">
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h2>访问控制</h2>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="enableAcl" name="enable_acl">
+                <span>启用会话白名单</span>
+              </label>
+            </div>
+            <div class="form-group" id="allowedSessionsGroup" style="display: none;">
+              <label for="allowedSessions">允许访问的会话 UMO</label>
+              <textarea id="allowedSessions" name="allowed_sessions" rows="6" placeholder="每行一个 UMO"></textarea>
+              <small>留空则允许所有会话访问</small>
+            </div>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

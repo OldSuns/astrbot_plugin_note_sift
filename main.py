@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Any
+import re
+import shutil
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -32,9 +34,52 @@ class NoteSiftPlugin(Star):
         self.config = config
         self.data_dir = self._determine_data_dir()
         self._last_search_by_session: dict[str, list[dict[str, Any]]] = {}
+        self._register_web_apis(context)
 
     async def initialize(self):
         await self._import_all_configured_vaults()
+
+    def _register_web_apis(self, context: Context):
+        """Register web APIs for plugin pages."""
+        try:
+            context.register_web_api(
+                f"/{PLUGIN_NAME}/vaults",
+                self.page_get_vaults,
+                ["GET"],
+                "Get all vaults status"
+            )
+            context.register_web_api(
+                f"/{PLUGIN_NAME}/config",
+                self.page_config,
+                ["GET", "POST"],
+                "Get or update plugin config"
+            )
+            context.register_web_api(
+                f"/{PLUGIN_NAME}/vault/import",
+                self.page_import_vault,
+                ["POST"],
+                "Upload and import a vault zip"
+            )
+            context.register_web_api(
+                f"/{PLUGIN_NAME}/vault/rebuild",
+                self.page_rebuild_vault,
+                ["POST"],
+                "Rebuild a vault index"
+            )
+            context.register_web_api(
+                f"/{PLUGIN_NAME}/vault/<vault_id>",
+                self.page_delete_vault,
+                ["DELETE"],
+                "Delete a vault"
+            )
+            context.register_web_api(
+                f"/{PLUGIN_NAME}/vault/delete",
+                self.page_delete_vault_post,
+                ["POST"],
+                "Delete a vault"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to register web APIs: {e}")
 
     @filter.command_group("kb")
     def kb(self):
@@ -368,6 +413,184 @@ class NoteSiftPlugin(Star):
 
         return "\n".join(lines)
 
+    async def page_get_vaults(self):
+        """Web API: Get all vaults with status and file count."""
+        from quart import jsonify
+        import json
+
+        vaults_info = self._get_available_vaults()
+
+        # Enrich with file count and name from manifest
+        for vault in vaults_info:
+            vault_id = vault["vault_id"]
+            settings = self._build_settings(vault_id)
+
+            # Try to read file count and name from manifest
+            file_count = 0
+            vault_name = vault_id  # Default to vault_id
+            imported_at = None
+
+            if settings.manifest_path.exists():
+                try:
+                    manifest_data = json.loads(settings.manifest_path.read_text(encoding="utf-8"))
+                    file_count = manifest_data.get("file_count", 0)
+                    vault_name = manifest_data.get("vault_name", vault_id)
+                    imported_at = manifest_data.get("imported_at") or imported_at_from_import_id(
+                        manifest_data.get("import_id")
+                    )
+                except Exception:
+                    pass
+
+            vault["file_count"] = file_count
+            vault["name"] = vault_name
+            vault["imported_at"] = imported_at
+
+        return jsonify({"vaults": vaults_info})
+
+    async def page_import_vault(self):
+        """Web API: upload and import a vault zip."""
+        from quart import jsonify, request
+        import base64
+
+        upload_dir = self.data_dir / "tmp_uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        zip_path = None
+        vault_id = ""
+        try:
+            content_type = request.content_type or ""
+            if "multipart/form-data" in content_type:
+                files = await request.files
+                form = await request.form
+                file = files.get("file")
+                if file is None:
+                    return jsonify({"success": False, "error": "缺少 zip 文件"}), 400
+                filename = Path(file.filename or "vault.zip").name
+                if Path(filename).suffix.lower() != ".zip":
+                    return jsonify({"success": False, "error": "仅支持 zip 文件"}), 400
+                vault_id = str(form.get("vault_id", "")).strip()
+                zip_path = upload_dir / filename
+                await file.save(zip_path)
+            else:
+                data = await request.get_json()
+                if not isinstance(data, dict):
+                    return jsonify({"success": False, "error": "请求体无效"}), 400
+                filename = Path(str(data.get("filename") or "vault.zip")).name
+                if Path(filename).suffix.lower() != ".zip":
+                    return jsonify({"success": False, "error": "仅支持 zip 文件"}), 400
+                encoded = str(data.get("content_base64") or "")
+                if not encoded:
+                    return jsonify({"success": False, "error": "缺少 zip 文件内容"}), 400
+                vault_id = str(data.get("vault_id") or "").strip()
+                zip_path = upload_dir / filename
+                zip_path.write_bytes(base64.b64decode(encoded))
+
+            resolved_vault_id = self._resolve_upload_vault_id(vault_id, zip_path)
+            settings = self._build_settings(resolved_vault_id)
+            manifest = VaultImporter(settings).import_zip(zip_path)
+            return jsonify({"success": True, "manifest": manifest_summary(manifest)})
+        except (ValueError, ImportErrorInfo) as error:
+            if zip_path and zip_path.exists():
+                zip_path.unlink(missing_ok=True)
+            return jsonify({"success": False, "error": str(error)}), 400
+        except Exception as error:
+            if zip_path and zip_path.exists():
+                zip_path.unlink(missing_ok=True)
+            logger.error(f"Failed to import vault from page: {error}")
+            return jsonify({"success": False, "error": "导入失败"}), 500
+
+    async def page_rebuild_vault(self):
+        """Web API: rebuild a vault index from existing files."""
+        from quart import jsonify, request
+
+        data = await request.get_json()
+        vault_id = str((data or {}).get("vault_id") or "").strip()
+        try:
+            self._validate_vault_id(vault_id)
+            manifest = VaultImporter(self._build_settings(vault_id)).rebuild_from_files()
+            return jsonify({"success": True, "manifest": manifest_summary(manifest)})
+        except (ValueError, ImportErrorInfo) as error:
+            return jsonify({"success": False, "error": str(error)}), 400
+
+    async def page_delete_vault(self, vault_id: str):
+        """Web API: delete a vault data directory."""
+        from quart import jsonify
+
+        try:
+            self._delete_vault_data(vault_id)
+            return jsonify({"success": True, "vault_id": vault_id})
+        except ValueError as error:
+            return jsonify({"success": False, "error": str(error)}), 400
+
+    async def page_delete_vault_post(self):
+        """Web API: delete a vault via POST for page bridge compatibility."""
+        from quart import jsonify, request
+
+        data = await request.get_json()
+        vault_id = str((data or {}).get("vault_id") or "").strip()
+        try:
+            self._delete_vault_data(vault_id)
+            return jsonify({"success": True, "vault_id": vault_id})
+        except ValueError as error:
+            return jsonify({"success": False, "error": str(error)}), 400
+
+    def _resolve_upload_vault_id(self, vault_id: str, zip_path: Path) -> str:
+        resolved = vault_id.strip() or extract_vault_id_from_path(zip_path)
+        self._validate_vault_id(resolved)
+        return resolved
+
+    def _validate_vault_id(self, vault_id: str) -> None:
+        if not vault_id:
+            raise ValueError("vault_id 不能为空")
+        if not re.fullmatch(r"[\w一-鿿-]+", vault_id):
+            raise ValueError("vault_id 只能包含字母、数字、下划线、短横线或中文")
+        if any(separator in vault_id for separator in ("/", "\\")) or ".." in vault_id:
+            raise ValueError("vault_id 包含非法路径字符")
+
+    def _delete_vault_data(self, vault_id: str) -> None:
+        self._validate_vault_id(vault_id)
+        vaults_dir = (self.data_dir / "vaults").resolve()
+        target = (vaults_dir / vault_id).resolve()
+        if target == vaults_dir or vaults_dir not in target.parents:
+            raise ValueError("vault_id 指向非法目录")
+        if not target.exists():
+            raise ValueError(f"知识库不存在: {vault_id}")
+        shutil.rmtree(target)
+
+    async def page_config(self):
+        """Web API: Get or update plugin config."""
+        from quart import jsonify, request
+
+        if request.method == "GET":
+            config = {
+                "max_discover_snippet_chars": self.config.get("max_discover_snippet_chars", 300),
+                "default_read_mode": self.config.get("default_read_mode", "outline"),
+                "max_read_chars": self.config.get("max_read_chars", 8000),
+                "full_over_limit_strategy": self.config.get("full_over_limit_strategy", "strict"),
+                "compressed_section_preview_chars": self.config.get("compressed_section_preview_chars", 200),
+                "enable_acl": self.config.get("enable_acl", False),
+                "allowed_sessions": self.config.get("allowed_sessions", "")
+            }
+            return jsonify(config)
+
+        elif request.method == "POST":
+            data = await request.get_json()
+
+            # Update config values
+            for key, value in data.items():
+                self.config[key] = value
+
+            # Try to save config
+            try:
+                if hasattr(self.config, 'save_config'):
+                    self.config.save_config()
+                elif hasattr(self.config, 'save'):
+                    self.config.save()
+            except Exception as e:
+                logger.warning(f"Failed to save config: {e}")
+
+            return jsonify({"success": True, "message": "配置已保存"})
+
 
 def parse_allowed_sessions(value: Any) -> set[str]:
     if isinstance(value, list):
@@ -439,6 +662,30 @@ def format_tool_payload(payload: Any) -> str:
     import json
 
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def manifest_summary(manifest: Any) -> dict[str, Any]:
+    return {
+        "import_id": manifest.import_id,
+        "vault_id": manifest.vault_id,
+        "file_count": manifest.file_count,
+        "ignored_count": manifest.ignored_count,
+        "fts_available": manifest.fts_available,
+        "imported_at": manifest.imported_at,
+        "vault_root": manifest.vault_root,
+    }
+
+
+def imported_at_from_import_id(import_id: Any) -> str | None:
+    try:
+        timestamp_ms = int(import_id)
+    except (TypeError, ValueError):
+        return None
+    if timestamp_ms <= 0:
+        return None
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).replace(microsecond=0).isoformat()
 
 
 def validate_int_param(value: Any, default: int, min_val: int = None, max_val: int = None) -> int:
