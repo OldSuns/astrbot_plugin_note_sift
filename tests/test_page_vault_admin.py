@@ -1,8 +1,11 @@
 import importlib
+import json
 import shutil
+import sqlite3
 import sys
 import types
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -59,6 +62,50 @@ class PageVaultAdminTest(unittest.TestCase):
         imported_at = self.module.imported_at_from_import_id("1700000000000")
 
         self.assertEqual(imported_at, "2023-11-14T22:13:20+00:00")
+
+    def test_get_available_vaults_ignores_empty_ghost_vault(self):
+        plugin = self._make_plugin()
+        ghost = plugin.data_dir / "vaults" / "default"
+        ghost.mkdir(parents=True)
+        db = sqlite3.connect(ghost / "index.sqlite3")
+        try:
+            db.execute("create table notes(note_id text)")
+            db.commit()
+        finally:
+            db.close()
+
+        real = plugin.data_dir / "vaults" / "medical"
+        real.mkdir(parents=True)
+        (real / "import_manifest.json").write_text(
+            json.dumps({"file_count": 1}),
+            encoding="utf-8",
+        )
+
+        vaults = plugin._get_available_vaults()
+
+        self.assertEqual([vault["vault_id"] for vault in vaults], ["medical"])
+
+    def test_kb_read_without_vault_id_resolves_across_vaults(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(zip_path, {"口腔医学/0.期末考试范围.md": "# 期末考试范围\n\n牙体牙髓重点"})
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(
+            plugin.kb_read(
+                event,
+                note_ref="口腔医学/0.期末考试范围.md",
+                mode="outline",
+            )
+        )
+
+        payload = json.loads(result)
+        self.assertTrue(payload["found"])
+        self.assertEqual(payload["vault_id"], "临床医学")
+        self.assertEqual(payload["title"], "期末考试范围")
+        self.assertFalse((plugin.data_dir / "vaults" / "default").exists())
 
     def _make_plugin(self):
         context = types.SimpleNamespace(register_web_api=lambda *_args, **_kwargs: None)
@@ -135,6 +182,16 @@ class PageVaultAdminTest(unittest.TestCase):
                 "astrbot.core.utils.astrbot_path": path_mod,
             }
         )
+
+    def _write_zip(self, path: Path, files: dict[str, str | bytes]) -> None:
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, content in files.items():
+                archive.writestr(name, content)
+
+    def _run_async(self, coro):
+        import asyncio
+
+        return asyncio.run(coro)
 
 
 if __name__ == "__main__":

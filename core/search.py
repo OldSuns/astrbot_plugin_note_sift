@@ -75,6 +75,8 @@ class VaultSearch:
         return results[:limit]
 
     def _load_notes(self):
+        if not self.settings.index_path.exists():
+            return []
         conn = VaultIndex(self.settings.index_path, self.settings.vault_id).connect()
         try:
             return conn.execute("select * from notes where vault_id = ?", (self.settings.vault_id,)).fetchall()
@@ -165,4 +167,37 @@ def search_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool
 
     # Sort by score and limit
     all_results.sort(key=lambda x: x["score"], reverse=True)
+    return all_results[:limit]
+
+
+def grep_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool = False, vault_id: str | None = None) -> list[dict]:
+    vaults_dir = Path(data_dir) / "vaults"
+    if not vaults_dir.exists():
+        return []
+
+    if vault_id:
+        vault_path = vaults_dir / vault_id
+        if not vault_path.exists():
+            available = [d.name for d in vaults_dir.iterdir() if d.is_dir()]
+            raise ValueError(
+                f"Knowledge vault '{vault_id}' not found. "
+                f"Available vaults: {', '.join(available) if available else 'none'}"
+            )
+        vault_dirs = [vault_path]
+    else:
+        vault_dirs = [d for d in vaults_dir.iterdir() if d.is_dir()]
+
+    all_results = []
+    for vault_dir in vault_dirs:
+        current_vault_id = vault_dir.name
+        settings = VaultSettings(data_dir=data_dir, vault_id=current_vault_id)
+        if not settings.index_path.exists():
+            continue
+
+        searcher = VaultSearch(settings)
+        results = searcher.grep(query, limit=limit, regex=regex)
+        for result in results:
+            result["vault_id"] = current_vault_id
+        all_results.extend(results)
+
     return all_results[:limit]

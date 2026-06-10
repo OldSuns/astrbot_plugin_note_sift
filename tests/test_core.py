@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.config import VaultSettings
 from core.importer import ImportErrorInfo, VaultImporter
 from core.reader import VaultReader
-from core.search import VaultSearch
+from core.search import VaultSearch, grep_across_vaults
 
 
 def write_zip(path: Path, files: dict[str, str | bytes]) -> None:
@@ -159,6 +159,24 @@ class CoreTest(unittest.TestCase):
         self.assertIn("beta keyword body", section["content"])
         self.assertNotIn("alpha body", section["content"])
         self.assertIn("keyword", snippets["content"])
+
+    def test_reader_missing_index_does_not_create_default_vault(self):
+        data_dir = self.tmp_path / "data"
+        settings = VaultSettings(data_dir=data_dir)
+
+        result = VaultReader(settings).read_note("missing.md", mode="outline")
+
+        self.assertFalse(result["found"])
+        self.assertFalse((data_dir / "vaults" / "default").exists())
+
+    def test_search_missing_index_does_not_create_default_vault(self):
+        data_dir = self.tmp_path / "data"
+        settings = VaultSettings(data_dir=data_dir)
+
+        results = VaultSearch(settings).grep("missing", limit=5)
+
+        self.assertEqual(results, [])
+        self.assertFalse((data_dir / "vaults" / "default").exists())
 
     def test_discover_requires_all_query_terms_for_plain_search(self):
         zip_path = self.tmp_path / "vault.zip"
@@ -336,6 +354,24 @@ This is section B with different content. """ + ("y" * 300)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["title"], "Python")
         self.assertEqual(results[0]["vault_id"], "tech")
+
+    def test_grep_across_multiple_vaults_without_default(self):
+        medical_zip = self.tmp_path / "medical.zip"
+        write_zip(medical_zip, {"cardiology.md": "# 心脏病学\n\n心血管疾病"})
+
+        tech_zip = self.tmp_path / "tech.zip"
+        write_zip(tech_zip, {"python.md": "# Python\n\nProgramming"})
+
+        data_dir = self.tmp_path / "data"
+        VaultImporter(VaultSettings(data_dir=data_dir, vault_id="medical")).import_zip(medical_zip)
+        VaultImporter(VaultSettings(data_dir=data_dir, vault_id="tech")).import_zip(tech_zip)
+
+        results = grep_across_vaults(data_dir, "Programming", limit=5)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "Python")
+        self.assertEqual(results[0]["vault_id"], "tech")
+        self.assertFalse((data_dir / "vaults" / "default").exists())
 
 
 if __name__ == "__main__":

@@ -11,12 +11,12 @@ try:
     from .core.config import VaultSettings
     from .core.importer import ImportErrorInfo, VaultImporter, extract_vault_id_from_path
     from .core.reader import VaultReader
-    from .core.search import VaultSearch, search_across_vaults
+    from .core.search import VaultSearch, grep_across_vaults, search_across_vaults
 except ImportError:
     from core.config import VaultSettings
     from core.importer import ImportErrorInfo, VaultImporter, extract_vault_id_from_path
     from core.reader import VaultReader
-    from core.search import VaultSearch, search_across_vaults
+    from core.search import VaultSearch, grep_across_vaults, search_across_vaults
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -121,11 +121,7 @@ class NoteSiftPlugin(Star):
             return
         vault_id, search_query = self._parse_vault_query(query)
 
-        # If specific vault, use it; otherwise search default
-        target_vault = vault_id or "default"
-        settings = self._build_settings(target_vault)
-        searcher = VaultSearch(settings)
-        results = searcher.grep(search_query, limit=8)
+        results = grep_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id)
         yield event.plain_result(render_grep_results(results))
 
     @kb.command("status")
@@ -210,11 +206,10 @@ class NoteSiftPlugin(Star):
         # Validate page parameter
         validated_page = validate_int_param(page, default=1, min_val=1)
 
-        # Parse vault_id from note_ref if present
-        if ":" in note_ref and not vault_id:
-            vault_id, note_ref = note_ref.split(":", 1)
+        target_vault, note_ref = self._resolve_read_target(note_ref, vault_id)
+        if not target_vault:
+            return format_tool_payload({"found": False, "error": "note not found"})
 
-        target_vault = vault_id or "default"
         settings = self._build_settings(target_vault)
         reader = VaultReader(settings)
 
@@ -225,6 +220,8 @@ class NoteSiftPlugin(Star):
             query=query or None,
             page=validated_page
         )
+        if result.get("found"):
+            result["vault_id"] = target_vault
         return format_tool_payload(result)
 
     def _build_settings(self, vault_id: str = "default") -> VaultSettings:
@@ -365,6 +362,33 @@ class NoteSiftPlugin(Star):
         # Default vault
         return "default", note_ref
 
+    def _resolve_read_target(self, note_ref: str, vault_id: str = "") -> tuple[str | None, str]:
+        if ":" in note_ref and not vault_id:
+            return tuple(note_ref.split(":", 1))
+        if vault_id:
+            return vault_id, note_ref
+
+        matches = self._find_note_across_vaults(note_ref)
+        if len(matches) == 1:
+            return matches[0], note_ref
+        if len(matches) > 1:
+            return None, note_ref
+        return None, note_ref
+
+    def _find_note_across_vaults(self, note_ref: str) -> list[str]:
+        vaults_dir = self.data_dir / "vaults"
+        if not vaults_dir.exists():
+            return []
+
+        matches = []
+        for vault_dir in sorted(d for d in vaults_dir.iterdir() if d.is_dir()):
+            settings = self._build_settings(vault_dir.name)
+            if not settings.index_path.exists():
+                continue
+            if VaultReader(settings).read_note(note_ref, mode="outline").get("found"):
+                matches.append(vault_dir.name)
+        return matches
+
     def _get_available_vaults(self) -> list[dict]:
         """Get structured information about available vaults.
 
@@ -381,6 +405,8 @@ class NoteSiftPlugin(Star):
         for vault_dir in sorted(vault_dirs):
             vault_id = vault_dir.name
             settings = self._build_settings(vault_id)
+            if not self._is_displayable_vault(settings):
+                continue
             vaults_info.append({
                 "vault_id": vault_id,
                 "has_manifest": settings.manifest_path.exists(),
@@ -388,6 +414,27 @@ class NoteSiftPlugin(Star):
             })
 
         return vaults_info
+
+    def _is_displayable_vault(self, settings: VaultSettings) -> bool:
+        if settings.manifest_path.exists():
+            return True
+        if settings.files_dir.exists() and any(settings.files_dir.rglob("*")):
+            return True
+        return self._index_has_notes(settings)
+
+    def _index_has_notes(self, settings: VaultSettings) -> bool:
+        if not settings.index_path.exists():
+            return False
+        import sqlite3
+
+        conn = sqlite3.connect(settings.index_path)
+        try:
+            row = conn.execute("select count(*) from notes where vault_id = ?", (settings.vault_id,)).fetchone()
+            return bool(row and row[0] > 0)
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
 
     def _status_text(self) -> str:
         vaults_dir = self.data_dir / "vaults"

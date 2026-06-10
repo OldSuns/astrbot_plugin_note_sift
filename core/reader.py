@@ -69,6 +69,8 @@ class VaultReader:
         return base
 
     def _find_note(self, note_ref: str):
+        if not self.settings.index_path.exists():
+            return None
         conn = VaultIndex(self.settings.index_path, self.settings.vault_id).connect()
         try:
             row = conn.execute(
