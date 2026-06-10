@@ -1,8 +1,13 @@
 name: astrbot_plugin_note_sift
 display_name: NoteSift / 筛记
-desc: 渐进式知识库 — 先 grep 发现，再按需读取。告别 RAG 的"黑盒检索+幻觉拼接"，让 LLM 像人一样：先搜索候选，再精准提取。原生兼容 Obsidian vault（自动识别 .obsidian、解析 frontmatter、提取双链），兼容标准 Markdown。FTS5 全文索引，5 种读取模式，多库管理。
+desc: 渐进式知识库 — 先 grep 发现，再按需读取。告别 RAG 的"黑盒检索"，让 LLM 像人一样：先搜索候选，再精准提取。原生兼容 Obsidian vault（自动识别 .obsidian、解析 frontmatter、提取双链），兼容标准 Markdown。FTS5 全文索引，5 种读取模式，多库管理。
 version: v0.1.2
 author: OldSun
 repo: "oldsuns/astrbot_plugin_note_sift"
 icon: logo.png
 astrbot_version: ">=4.13.0"
+keywords:
+  - obsidian
+  - 知识库
+  - 笔记
+  - grep

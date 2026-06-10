@@ -2,7 +2,24 @@
 
 <img src="https://count.getloli.com/get/@NoteSift?theme=moebooru" alt="Moe Counter">
 
+![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-5865F2)
+![SQLite FTS5](https://img.shields.io/badge/Search-SQLite%20FTS5-0F766E)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
 面向 AstrBot 的 Grep-first Markdown/Obsidian 知识库插件。
+
+## 文档导航
+
+| 文档 | 内容 |
+|------|------|
+| [命令使用](docs/commands.md) | `/kb search`、`/kb read`、`/kb grep`、`/kb status`、`/kb rebuild` |
+| [配置指南](docs/configuration.md) | 配置项、数据目录、ACL、导入与读取参数 |
+| [LLM 工具接口](docs/llm-tools.md) | `kb_discover`、`kb_read` 的参数、输出与调用建议 |
+| [多知识库](docs/multi-vault.md) | 多 vault 架构、`vault_id`、跨库搜索与管理 |
+| [读取模式](docs/read-modes.md) | `outline`、`summary`、`section`、`snippets`、`full` |
+| [使用场景](docs/use-cases.md) | 常见工作流和最佳实践示例 |
+| [故障排除](docs/troubleshooting.md) | 导入、搜索、读取、权限等常见问题 |
+| [Pages 进度](docs/PAGES_PROGRESS.md) | Dashboard 页面实现进度 |
 
 ## 核心特性
 
