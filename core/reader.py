@@ -49,9 +49,15 @@ class VaultReader:
                 base["requested_heading"] = section.get("requested_heading", "")
                 base["available_headings"] = section.get("available_headings", [])
                 return base
-            base["content"] = section["content"]
             base["heading"] = section["heading"]
             base["heading_matched"] = section["heading_matched"]
+            content = section["content"]
+            if len(content) > self.settings.max_read_chars:
+                base["content"] = content[: self.settings.max_read_chars]
+                base["truncated"] = True
+                base["next_action_hint"] = "章节超过 max_read_chars 已截断；可用更具体的子标题再 section，或用 snippets 检索关键词。"
+            else:
+                base["content"] = content
             return base
         if mode == "snippets":
             base["content"] = make_snippet(body, query or note["title"], self.settings.max_read_chars)

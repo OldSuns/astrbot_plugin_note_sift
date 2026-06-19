@@ -97,7 +97,7 @@ class NoteSiftPlugin(Star):
             yield event.plain_result("当前会话未授权访问知识库。")
             return
         vault_id, search_query = self._parse_vault_query(query)
-        results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id)
+        results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id, max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)))
         self._last_search_by_session[event.unified_msg_origin] = results
         yield event.plain_result(render_search_results(results))
 
@@ -189,7 +189,8 @@ class NoteSiftPlugin(Star):
             query,
             limit=validated_limit,
             regex=bool(regex),
-            vault_id=vault_id or None
+            vault_id=vault_id or None,
+            max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)),
         )
         return format_tool_payload({"results": format_discover_results(results, verbose=bool(verbose))})
 
