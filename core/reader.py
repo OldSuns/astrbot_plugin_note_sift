@@ -34,7 +34,12 @@ class VaultReader:
         if mode == "outline":
             return base
         if mode == "summary":
-            base["content"] = extract_callouts(body)
+            callouts = extract_callouts(body)
+            if callouts:
+                base["content"] = callouts
+            else:
+                base["content"] = lead_paragraph(body)
+                base["next_action_hint"] = "无摘要 callout，已回退前导段落；可用 outline 看结构或 section 读指定章节。"
             return base
         if mode == "section":
             section = select_section(body, headings, heading)
@@ -96,12 +101,24 @@ class VaultReader:
             conn.close()
 
 
+CALLOUT_PREFIXES = (
+    "> [!summary]",
+    "> [!abstract]",
+    "> [!tldr]",
+    "> [!note]",
+    "> [!info]",
+    "> [!important]",
+    "> [!tip]",
+    "> [!warning]",
+)
+
+
 def extract_callouts(body: str) -> str:
     lines = body.splitlines()
     collected = []
     capture = False
     for line in lines:
-        if line.startswith("> [!summary]") or line.startswith("> [!warning]") or line.startswith("> [!tip]"):
+        if any(line.startswith(prefix) for prefix in CALLOUT_PREFIXES):
             capture = True
             collected.append(line)
             continue
@@ -110,6 +127,29 @@ def extract_callouts(body: str) -> str:
             continue
         capture = False
     return "\n".join(collected).strip()
+
+
+def lead_paragraph(body: str) -> str:
+    """返回首个标题前的前导段落；若无，则取首个非空、非标题段落。"""
+    paragraphs = []
+    current: list[str] = []
+    for line in body.splitlines():
+        if line.strip().startswith("#"):
+            if current:
+                break
+            continue
+        if not line.strip():
+            if current:
+                paragraphs.append("\n".join(current).strip())
+                current = []
+            continue
+        current.append(line)
+    if current:
+        paragraphs.append("\n".join(current).strip())
+    for para in paragraphs:
+        if para:
+            return para
+    return ""
 
 
 def extract_section(body: str, headings: list[dict], heading: str | None) -> str:

@@ -6,6 +6,7 @@ __pycache__/
 dist/
 build/
 tests/
+docs/superpowers
 
 # Tests
 .pytest_cache/

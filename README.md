@@ -3,7 +3,7 @@
 <img src="https://count.getloli.com/get/@NoteSift?theme=moebooru" alt="Moe Counter">
 
 ![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-5865F2)
-![SQLite FTS5](https://img.shields.io/badge/Search-SQLite%20FTS5-0F766E)
+![Search](https://img.shields.io/badge/Search-SQLite%20LIKE%2FRegex-0F766E)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 面向 AstrBot 的 Grep-first Markdown/Obsidian 知识库插件。
@@ -19,7 +19,6 @@
 | [读取模式](docs/read-modes.md) | `outline`、`summary`、`section`、`snippets`、`full` |
 | [使用场景](docs/use-cases.md) | 常见工作流和最佳实践示例 |
 | [故障排除](docs/troubleshooting.md) | 导入、搜索、读取、权限等常见问题 |
-| [Pages 进度](docs/PAGES_PROGRESS.md) | Dashboard 页面实现进度 |
 
 ## 核心特性
 
@@ -27,18 +26,18 @@
 - **Dashboard 页面** — 可视化控制面板，实时查看所有知识库状态
 - **智能文件提取** — 自动过滤，仅提取 Markdown/文本文件
 - **安全检查** — 严格的 zip 安全检查，防止路径遍历
-- **全文搜索** — 基于 SQLite FTS5 的多字段加权搜索（标题/别名/标签/路径/正文），自动降级
+- **全文搜索** — 基于 SQLite 子串/正则的多字段加权搜索（标题/别名/标签/路径/正文），跨字段词覆盖
 - **渐进式阅读** — 先搜索发现，再按需读取
 - **五种读取模式**
   - `outline` — 元数据 + 标题树
-  - `summary` — 提取标注块（> [!summary] / [!warning] / [!tip]）
+  - `summary` — 提取标注块（[!summary]/[!note]/[!tip] 等），无标注时回退前导段落
   - `section` — 按标题读取指定章节
   - `snippets` — 查询相关正文片段
   - `full` — 完整正文（支持 strict/paged/compressed 三种超限策略）
-- **LLM 工具** — 提供 `kb_list_vaults`、`kb_discover` 和 `kb_read` 函数工具
+- **LLM 工具** — 提供 `kb_list_vaults`、`kb_discover`、`kb_read` 和 `kb_related` 函数工具
 - **跨库搜索** — 单次搜索覆盖所有或指定知识库
 - **Obsidian 自动识别** — 自动检测 `.obsidian` 目录并提取 vault 根路径
-- **前置元数据解析** — 自动提取 tags、aliases、links
+- **前置元数据解析** — 自动提取 tags、aliases，并解析双链供 `kb_related` 查询
 - **访问控制** — 可选的会话白名单 ACL
 
 ## 安装
@@ -235,6 +234,30 @@ kb_read(note_ref="medical:kawasaki.md", mode="outline", heading="", query="", pa
 
 空字段不会输出；`truncated`、`next_action_hint` 只在需要时返回；`verbose=true` 时额外返回 `tags`、`aliases`。
 
+### kb_related
+
+```python
+kb_related(note_ref="medical:kawasaki.md", vault_id="")
+```
+
+- `note_ref` — note_id 或路径，可用 `vault_id:note_ref` 前缀
+- `vault_id` — 指定知识库 ID，留空则按前缀或跨库解析
+
+返回该笔记的双链关系：`outlinks`（它链出的笔记，未解析的悬空链接标 `resolved:false`）与 `backlinks`（链入它的笔记）。解析范围限于同一知识库。
+
+```json
+{
+  "found": true,
+  "vault_id": "medical",
+  "ref": "medical:8f521aac31ee8784",
+  "note_id": "8f521aac31ee8784",
+  "path": "儿科学/川崎病.md",
+  "title": "川崎病",
+  "outlinks": [{"ref": "medical:...", "note_id": "...", "path": "心血管/血管炎.md", "title": "血管炎", "resolved": true}],
+  "backlinks": [{"ref": "medical:...", "note_id": "...", "path": "儿科学/发热鉴别.md", "title": "发热鉴别"}]
+}
+```
+
 ## 示例
 
 ### 医学知识查询
@@ -257,7 +280,6 @@ kb_read(note_ref="medical:kawasaki.md", mode="outline", heading="", query="", pa
 
 - 导入后 zip 文件会被自动删除，请提前备份
 - Obsidian vault 自动检测：如包含 `.obsidian` 目录，仅导入该目录下内容
-- FTS5 自动降级：SQLite 不支持时自动切换到普通搜索
 - 分页边界在段落：paged 模式在 `\n\n` 处分页，不截断段落
 
 ## 许可证

@@ -4,9 +4,11 @@
 
 ## 工具概览
 
-NoteSift 提供两个主要的 LLM 工具：
+NoteSift 提供以下 LLM 工具：
+- `kb_list_vaults` - 列出可用知识库及其 vault_id
 - `kb_discover` - 搜索发现候选笔记
 - `kb_read` - 读取笔记内容
+- `kb_related` - 查看笔记的双链关系（backlinks / outlinks）
 
 ## kb_discover
 
@@ -349,9 +351,13 @@ section = kb_read(note_id, mode="section", heading="目标章节")
 result = kb_read(note_id, mode="full")
 
 if not result.get("found"):
-    # 笔记不存在
     error = result.get("error", "unknown error")
-    
+    if error == "ambiguous":
+        # 同名笔记存在于多个库；从 candidates 选定后用 ref 重试
+        for cand in result.get("candidates", []):
+            kb_read(cand["ref"], mode="full")
+    # error == "note not found" 则笔记确实不存在
+
 if result.get("truncated"):
     # 内容被截断
     hint = result.get("next_action_hint")
@@ -365,6 +371,58 @@ result = kb_read(note_id, mode="full")
 source = result.get("source_ref")
 # 格式：path#title
 # 可用于回答时注明来源
+```
+
+## kb_related
+
+查看某篇笔记的双链关系：它链出的笔记（outlinks）与链入它的笔记（backlinks）。链接目标按 basename + title + aliases 解析，贴合 Obsidian 行为；解析范围限于同一知识库（Obsidian vault 相互隔离）。
+
+### 函数签名
+
+```python
+kb_related(
+    note_ref: str,        # note_id、path 或 vault_id:note_ref
+    vault_id: str = ""    # 指定知识库ID，留空则按前缀或跨库解析
+)
+```
+
+### 返回格式
+
+```json
+{
+  "found": true,
+  "vault_id": "medical",
+  "ref": "medical:8f521aac31ee8784",
+  "note_id": "8f521aac31ee8784",
+  "path": "儿科学/川崎病.md",
+  "title": "川崎病",
+  "outlinks": [
+    {"ref": "medical:...", "note_id": "...", "path": "心血管/血管炎.md", "title": "血管炎", "resolved": true},
+    {"target": "尚未创建的笔记", "resolved": false}
+  ],
+  "backlinks": [
+    {"ref": "medical:...", "note_id": "...", "path": "儿科学/发热鉴别.md", "title": "发热鉴别"}
+  ]
+}
+```
+
+### 字段说明
+
+- `outlinks` - 本笔记链出的目标；已解析项含 `ref/note_id/path/title` 且 `resolved=true`，悬空链接为 `{target, resolved:false}`
+- `backlinks` - 链入本笔记的来源笔记列表
+- 跨库重名时返回 `{"found": false, "error": "ambiguous", "candidates": [...]}`，与 `kb_read` 一致
+
+### 使用示例
+
+```python
+# 查看某笔记的关联
+kb_related("medical:川崎病.md")
+
+# 配合 discover/read 做图谱式导航
+hit = kb_discover("川崎病", limit=1)["results"][0]
+rel = kb_related(hit["ref"])
+for back in rel["backlinks"]:
+    kb_read(back["ref"], mode="summary")
 ```
 
 ## 工作流示例

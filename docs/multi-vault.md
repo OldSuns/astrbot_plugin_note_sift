@@ -238,6 +238,28 @@ kb_read("tech:note_abc123", mode="outline")
 /kb read 2    # 读取 js 库的笔记
 ```
 
+### 不带 vault_id 的解析
+
+LLM 工具 `kb_read` / `kb_related` 在 `note_ref` 不含 `vault_id:` 前缀、也未传 `vault_id` 时，会跨所有库解析该 note：
+
+- 命中唯一库 → 直接读取该库
+- 命中 0 个库 → `{"found": false, "error": "note not found"}`
+- 命中多个库（同名笔记）→ 不猜测，返回歧义候选：
+
+```json
+{
+  "found": false,
+  "error": "ambiguous",
+  "candidates": [
+    {"vault_id": "vaultA", "note_id": "...", "path": "shared.md", "ref": "vaultA:..."},
+    {"vault_id": "vaultB", "note_id": "...", "path": "shared.md", "ref": "vaultB:..."}
+  ],
+  "next_action_hint": "该 note 在多个知识库存在，请用 vault_id 或 vault_id:note_ref 指定。"
+}
+```
+
+收到 `ambiguous` 时，从 `candidates` 选定一个 `ref` 重新调用即可。
+
 ## 使用场景
 
 ### 场景 1：按领域分类
