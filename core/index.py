@@ -36,14 +36,6 @@ create table if not exists notes(
   content_hash text not null,
   body text not null
 );
-create table if not exists headings(
-  id integer primary key autoincrement,
-  note_id text not null,
-  level integer not null,
-  title text not null,
-  line_start integer not null,
-  line_end integer not null
-);
 create table if not exists links(
   id integer primary key autoincrement,
   note_id text not null,
@@ -68,19 +60,16 @@ class VaultIndex:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # Ensure tables exist (idempotent operation)
         conn.executescript(SCHEMA)
         return conn
 
     def initialize(self, root_path: Path) -> None:
         conn = self.connect()
         try:
-            conn.executescript(SCHEMA)
             conn.execute(
                 "insert or replace into vaults(vault_id, name, root_path, updated_at) values(?, ?, ?, current_timestamp)",
                 (self.vault_id, self.vault_id, str(root_path)),
             )
-            self._try_create_fts(conn)
             conn.commit()
         finally:
             conn.close()
@@ -88,19 +77,12 @@ class VaultIndex:
     def rebuild_notes(self, root_path: Path, notes: list[tuple[str, Path, ParsedNote]]) -> None:
         conn = self.connect()
         try:
-            conn.executescript(SCHEMA)
             conn.execute("delete from notes where vault_id = ?", (self.vault_id,))
-            conn.execute(
-                "delete from headings where note_id not in (select note_id from notes)"
-            )
             conn.execute("delete from links where note_id not in (select note_id from notes)")
             conn.execute(
                 "insert or replace into vaults(vault_id, name, root_path, updated_at) values(?, ?, ?, current_timestamp)",
                 (self.vault_id, self.vault_id, str(root_path)),
             )
-            fts_enabled = self._try_create_fts(conn)
-            if fts_enabled:
-                conn.execute("delete from notes_fts")
             for relative_path, file_path, parsed in notes:
                 content = file_path.read_text(encoding="utf-8", errors="replace")
                 note_id = stable_note_id(self.vault_id, relative_path)
@@ -125,52 +107,11 @@ class VaultIndex:
                         parsed.body,
                     ),
                 )
-                for heading in parsed.headings:
-                    conn.execute(
-                        "insert into headings(note_id, level, title, line_start, line_end) values(?, ?, ?, ?, ?)",
-                        (
-                            note_id,
-                            heading["level"],
-                            heading["title"],
-                            heading["line_start"],
-                            heading["line_end"],
-                        ),
-                    )
                 for link in parsed.links:
                     conn.execute(
                         "insert into links(note_id, target, alias, heading, raw) values(?, ?, ?, ?, ?)",
-                        (
-                            note_id,
-                            link["target"],
-                            link["alias"],
-                            link["heading"],
-                            link["raw"],
-                        ),
-                    )
-                if fts_enabled:
-                    conn.execute(
-                        "insert into notes_fts(note_id, title, path, body) values(?, ?, ?, ?)",
-                        (note_id, parsed.title, relative_path, parsed.body),
+                        (note_id, link["target"], link["alias"], link["heading"], link["raw"]),
                     )
             conn.commit()
-        finally:
-            conn.close()
-
-    def _try_create_fts(self, conn: sqlite3.Connection) -> bool:
-        try:
-            conn.execute(
-                "create virtual table if not exists notes_fts using fts5(note_id unindexed, title, path, body)"
-            )
-            return True
-        except sqlite3.Error:
-            return False
-
-    def fts_available(self) -> bool:
-        conn = self.connect()
-        try:
-            conn.execute("select count(*) from notes_fts").fetchone()
-            return True
-        except sqlite3.Error:
-            return False
         finally:
             conn.close()

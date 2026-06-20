@@ -70,10 +70,7 @@ kb_read("kawasaki.md", mode="outline")
 
 ### 返回内容
 
-提取笔记中的 Obsidian 标注块（callout）：
-- `> [!summary]` - 摘要
-- `> [!warning]` - 警告
-- `> [!tip]` - 提示
+提取笔记中的 Obsidian 标注块（callout），支持 `[!summary]`、`[!abstract]`、`[!tldr]`、`[!note]`、`[!info]`、`[!important]`、`[!tip]`、`[!warning]` 等类型。若笔记中没有任何标注块，则回退为「首个标题前的前导段落」，并附 `next_action_hint` 提示改用 outline/section。
 
 ### 返回示例
 
@@ -100,7 +97,6 @@ cardiology/kawasaki.md
 - 获取作者标注的重点
 
 ❌ **不适用场景**：
-- 笔记中没有标注块
 - 需要完整内容
 - 需要详细论述
 
@@ -116,8 +112,8 @@ kb_read("kawasaki.md", mode="summary")
 
 ### 注意事项
 
-- 如果笔记中没有标注块，返回内容为空
-- 仅识别上述三种标注类型
+- 如果笔记中没有标注块，回退返回首个标题前的前导段落
+- 识别多种 Obsidian callout 类型（summary/abstract/tldr/note/info/important/tip/warning）
 - 保留原始 Markdown 格式
 
 ## section（章节模式）
@@ -432,11 +428,11 @@ kb_read("note.md", mode="full", page=2)
 
 **解决**：使用 `full` 模式查看原始内容
 
-### 问题：summary 返回空白
+### 问题：summary 返回的是前导段落而非标注
 
-**原因**：笔记中没有标注块
+**原因**：笔记中没有 callout 标注块，已自动回退到首个标题前的前导段落
 
-**解决**：使用其他模式，或在笔记中添加标注
+**解决**：如需结构或指定章节，按 `next_action_hint` 改用 outline 或 section
 
 ### 问题：section 返回不是期望的章节
 
