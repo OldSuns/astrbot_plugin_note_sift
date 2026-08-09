@@ -5,12 +5,13 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-tests/
+docs/superpowers
 
 # Tests
 .pytest_cache/
 .coverage
 htmlcov/
+tests/.tmp*/
 
 # IDE
 .vscode/

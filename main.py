@@ -10,11 +10,13 @@ from astrbot.api.star import Context, Star, register
 try:
     from .core.config import VaultSettings
     from .core.importer import ImportErrorInfo, VaultImporter, extract_vault_id_from_path
+    from .core.links import find_related
     from .core.reader import VaultReader
     from .core.search import VaultSearch, grep_across_vaults, search_across_vaults
 except ImportError:
     from core.config import VaultSettings
     from core.importer import ImportErrorInfo, VaultImporter, extract_vault_id_from_path
+    from core.links import find_related
     from core.reader import VaultReader
     from core.search import VaultSearch, grep_across_vaults, search_across_vaults
 
@@ -26,8 +28,11 @@ except Exception:
 
 PLUGIN_NAME = "astrbot_plugin_note_sift"
 
+READ_MODES = ("outline", "summary", "section", "snippets", "full")
+OVER_LIMIT_STRATEGIES = ("strict", "paged", "compressed")
 
-@register(PLUGIN_NAME, "OldSun", "NoteSift - Grep-first Markdown/Obsidian knowledge base for AstrBot", "0.1.0")
+
+@register(PLUGIN_NAME, "OldSun", "NoteSift - Grep-first Markdown/Obsidian knowledge base for AstrBot", "0.2.0")
 class NoteSiftPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -92,7 +97,7 @@ class NoteSiftPlugin(Star):
             yield event.plain_result("当前会话未授权访问知识库。")
             return
         vault_id, search_query = self._parse_vault_query(query)
-        results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id)
+        results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id, max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)))
         self._last_search_by_session[event.unified_msg_origin] = results
         yield event.plain_result(render_search_results(results))
 
@@ -144,7 +149,7 @@ class NoteSiftPlugin(Star):
         if manifests:
             summary = []
             for m in manifests:
-                summary.append(f"{m.vault_id}: {m.file_count} 个文件，FTS5={'可用' if m.fts_available else '不可用'}")
+                summary.append(f"{m.vault_id}: {m.file_count} 个文件")
             yield event.plain_result("重建完成：\n" + "\n".join(summary))
         else:
             yield event.plain_result("未找到已导入的知识库，无法重建。")
@@ -184,7 +189,8 @@ class NoteSiftPlugin(Star):
             query,
             limit=validated_limit,
             regex=bool(regex),
-            vault_id=vault_id or None
+            vault_id=vault_id or None,
+            max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)),
         )
         return format_tool_payload({"results": format_discover_results(results, verbose=bool(verbose))})
 
@@ -208,8 +214,17 @@ class NoteSiftPlugin(Star):
         # Validate page parameter
         validated_page = validate_int_param(page, default=1, min_val=1)
 
-        target_vault, note_ref = self._resolve_read_target(note_ref, vault_id)
+        target_vault, note_ref, candidates = self._resolve_read_target(note_ref, vault_id)
         if not target_vault:
+            if candidates:
+                return format_tool_payload(
+                    {
+                        "found": False,
+                        "error": "ambiguous",
+                        "candidates": candidates,
+                        "next_action_hint": "该 note 在多个知识库存在，请用 vault_id 或 vault_id:note_ref 指定。",
+                    }
+                )
             return format_tool_payload({"found": False, "error": "note not found"})
 
         settings = self._build_settings(target_vault)
@@ -226,6 +241,33 @@ class NoteSiftPlugin(Star):
         if result.get("found"):
             result["vault_id"] = target_vault
         return format_tool_payload(format_read_result(result, target_vault, read_mode, verbose=bool(verbose)))
+
+    @filter.llm_tool(name="kb_related")
+    async def kb_related(self, event: AstrMessageEvent, note_ref: str, vault_id: str = "") -> str:
+        """查看某篇笔记的双链关系：返回它链出的笔记(outlinks)与链入它的笔记(backlinks)。
+
+        Args:
+            note_ref(string): note_id 或 path，可用 vault_id:note_ref 前缀
+            vault_id(string): 指定知识库 ID，留空则按前缀或跨库解析
+        """
+        if not self._is_allowed(event):
+            return "Knowledge vault access denied for this session."
+
+        target_vault, note_ref, candidates = self._resolve_read_target(note_ref, vault_id)
+        if not target_vault:
+            if candidates:
+                return format_tool_payload(
+                    {"found": False, "error": "ambiguous", "candidates": candidates}
+                )
+            return format_tool_payload({"found": False, "error": "note not found"})
+
+        settings = self._build_settings(target_vault)
+        resolved = VaultReader(settings).read_note(note_ref, mode="outline")
+        if not resolved.get("found"):
+            return format_tool_payload({"found": False, "error": "note not found"})
+
+        related = find_related(settings, resolved["note_id"])
+        return format_tool_payload(related)
 
     def _build_settings(self, vault_id: str = "default") -> VaultSettings:
         return VaultSettings(
@@ -365,20 +407,25 @@ class NoteSiftPlugin(Star):
         # Default vault
         return "default", note_ref
 
-    def _resolve_read_target(self, note_ref: str, vault_id: str = "") -> tuple[str | None, str]:
+    def _resolve_read_target(self, note_ref: str, vault_id: str = "") -> tuple[str | None, str, list[dict]]:
+        """Returns (vault_id_or_None, note_ref, candidates).
+
+        candidates 仅在跨库出现多个同名命中时非空。
+        """
         if ":" in note_ref and not vault_id:
-            return tuple(note_ref.split(":", 1))
+            parts = note_ref.split(":", 1)
+            return parts[0], parts[1], []
         if vault_id:
-            return vault_id, note_ref
+            return vault_id, note_ref, []
 
         matches = self._find_note_across_vaults(note_ref)
         if len(matches) == 1:
-            return matches[0], note_ref
+            return matches[0]["vault_id"], note_ref, []
         if len(matches) > 1:
-            return None, note_ref
-        return None, note_ref
+            return None, note_ref, matches
+        return None, note_ref, []
 
-    def _find_note_across_vaults(self, note_ref: str) -> list[str]:
+    def _find_note_across_vaults(self, note_ref: str) -> list[dict]:
         vaults_dir = self.data_dir / "vaults"
         if not vaults_dir.exists():
             return []
@@ -388,8 +435,16 @@ class NoteSiftPlugin(Star):
             settings = self._build_settings(vault_dir.name)
             if not settings.index_path.exists():
                 continue
-            if VaultReader(settings).read_note(note_ref, mode="outline").get("found"):
-                matches.append(vault_dir.name)
+            found = VaultReader(settings).read_note(note_ref, mode="outline")
+            if found.get("found"):
+                matches.append(
+                    {
+                        "vault_id": vault_dir.name,
+                        "note_id": found.get("note_id", ""),
+                        "path": found.get("path", ""),
+                        "ref": f"{vault_dir.name}:{found.get('note_id', '')}",
+                    }
+                )
         return matches
 
     def _get_available_vaults(self) -> list[dict]:
@@ -607,6 +662,34 @@ class NoteSiftPlugin(Star):
             raise ValueError(f"知识库不存在: {vault_id}")
         shutil.rmtree(target)
 
+    def _sanitize_config_update(self, data: Any) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            raise ValueError("请求体无效")
+        result: dict[str, Any] = {}
+        for key, value in data.items():
+            if key in ("max_read_chars", "max_discover_snippet_chars", "compressed_section_preview_chars"):
+                try:
+                    parsed = int(value)
+                except (TypeError, ValueError):
+                    raise ValueError(f"{key} 必须为整数")
+                if parsed <= 0:
+                    raise ValueError(f"{key} 必须为正整数")
+                result[key] = parsed
+            elif key == "default_read_mode":
+                if value not in READ_MODES:
+                    raise ValueError(f"default_read_mode 必须是 {READ_MODES} 之一")
+                result[key] = value
+            elif key == "full_over_limit_strategy":
+                if value not in OVER_LIMIT_STRATEGIES:
+                    raise ValueError(f"full_over_limit_strategy 必须是 {OVER_LIMIT_STRATEGIES} 之一")
+                result[key] = value
+            elif key == "enable_acl":
+                result[key] = bool(value)
+            elif key == "allowed_sessions":
+                result[key] = str(value)
+            # 其余未知 key 一律忽略
+        return result
+
     async def page_config(self):
         """Web API: Get or update plugin config."""
         from quart import jsonify, request
@@ -625,12 +708,14 @@ class NoteSiftPlugin(Star):
 
         elif request.method == "POST":
             data = await request.get_json()
+            try:
+                sanitized = self._sanitize_config_update(data)
+            except ValueError as error:
+                return jsonify({"success": False, "error": str(error)}), 400
 
-            # Update config values
-            for key, value in data.items():
+            for key, value in sanitized.items():
                 self.config[key] = value
 
-            # Try to save config
             try:
                 if hasattr(self.config, 'save_config'):
                     self.config.save_config()
@@ -639,7 +724,7 @@ class NoteSiftPlugin(Star):
             except Exception as e:
                 logger.warning(f"Failed to save config: {e}")
 
-            return jsonify({"success": True, "message": "配置已保存"})
+            return jsonify({"success": True, "message": "配置已保存", "applied": sorted(sanitized)})
 
 
 def parse_allowed_sessions(value: Any) -> set[str]:
@@ -799,7 +884,6 @@ def manifest_summary(manifest: Any) -> dict[str, Any]:
         "vault_id": manifest.vault_id,
         "file_count": manifest.file_count,
         "ignored_count": manifest.ignored_count,
-        "fts_available": manifest.fts_available,
         "imported_at": manifest.imported_at,
         "vault_root": manifest.vault_root,
     }

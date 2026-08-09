@@ -24,7 +24,6 @@ class ImportManifest:
     zip_hash: str
     file_count: int
     ignored_count: int
-    fts_available: bool
     imported_at: str
     vault_root: str = ""
 
@@ -81,7 +80,6 @@ class VaultImporter:
                 zip_hash="",  # No zip for rebuild
                 file_count=file_count,
                 ignored_count=0,  # Not applicable for rebuild
-                fts_available=VaultIndex(final_index, self.settings.vault_id).fts_available(),
                 imported_at=imported_at,
                 vault_root="",
             )
@@ -143,7 +141,6 @@ class VaultImporter:
                 zip_hash=zip_hash,
                 file_count=file_count,
                 ignored_count=ignored_count,
-                fts_available=VaultIndex(final_index, self.settings.vault_id).fts_available(),
                 imported_at=imported_at,
                 vault_root=vault_root,
             )

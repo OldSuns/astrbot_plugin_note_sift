@@ -329,7 +329,6 @@ kb_read(note_id, mode="section", heading="IVIG治疗介绍")
 **原因**：
 - 知识库过大
 - 跨多个库搜索
-- FTS5 不可用
 
 **解决**：
 
@@ -345,11 +344,6 @@ kb_discover("keyword", vault_id="specific")
 **方案 2：减少库数量**
 - 合并相关的小库
 - 拆分过大的库
-
-**方案 3：检查 FTS5**
-```bash
-/kb status  # 查看 FTS5 是否可用
-```
 
 ### 读取速度慢
 
@@ -426,22 +420,6 @@ kb_discover("keyword", vault_id="specific")
 3. 重新导入
 
 ## 兼容性问题
-
-### SQLite FTS5 不可用
-
-**现象**：
-```bash
-/kb status
-# 显示 FTS5: 不可用
-```
-
-**影响**：
-- 搜索速度可能较慢
-- 功能正常，自动降级
-
-**说明**：
-- 自动降级到普通 SQL 搜索
-- 不影响基本功能
 
 ### Obsidian 格式问题
 
