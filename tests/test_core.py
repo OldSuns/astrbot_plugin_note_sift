@@ -602,5 +602,84 @@ This is section B with different content. """ + ("y" * 300)
         self.assertEqual(len(resolved_out), 1)
 
 
+    def test_rebuild_ignores_oversized_files(self):
+        """rebuild_from_files 应跳过超大文件并统计 ignored_count。"""
+        zip_path = self.tmp_path / "v.zip"
+        write_zip(zip_path, {"ok.md": "# OK\n\n正常内容"})
+        settings = VaultSettings(data_dir=self.tmp_path / "data", max_file_size_mb=1)
+        VaultImporter(settings).import_zip(zip_path)
+
+        # 手动添加一个超大文件到 files/
+        big_file = settings.files_dir / "big.md"
+        big_file.write_text("# Big\n\n" + "x" * (2 * 1024 * 1024), encoding="utf-8")
+
+        manifest = VaultImporter(settings).rebuild_from_files()
+        self.assertEqual(manifest.file_count, 1)
+        self.assertEqual(manifest.ignored_count, 1)
+
+    def test_rebuild_ignores_disallowed_extensions(self):
+        """rebuild_from_files 应跳过不允许的扩展名并统计 ignored_count。"""
+        zip_path = self.tmp_path / "v.zip"
+        write_zip(zip_path, {"ok.md": "# OK\n\n正常内容"})
+        settings = VaultSettings(data_dir=self.tmp_path / "data")
+        VaultImporter(settings).import_zip(zip_path)
+
+        # 手动添加一个不允许的扩展名
+        bad_file = settings.files_dir / "bad.xyz"
+        bad_file.write_text("not markdown", encoding="utf-8")
+
+        manifest = VaultImporter(settings).rebuild_from_files()
+        self.assertEqual(manifest.file_count, 1)
+        self.assertEqual(manifest.ignored_count, 1)
+
+    def test_select_section_empty_heading_treated_as_none(self):
+        """空字符串 heading 应与 None 行为一致:返回第一个标题。"""
+        from core.reader import select_section
+        headings = [
+            {"level": 1, "title": "标题A", "line_start": 1, "line_end": 3},
+            {"level": 2, "title": "标题B", "line_start": 4, "line_end": 5},
+        ]
+        body = "# 标题A\n\n内容A\n\n## 标题B\n内容B"
+
+        result_none = select_section(body, headings, None)
+        result_empty = select_section(body, headings, "")
+        result_space = select_section(body, headings, "  ")
+
+        self.assertEqual(result_none["heading"]["title"], "标题A")
+        self.assertEqual(result_empty["heading"]["title"], "标题A")
+        self.assertEqual(result_space["heading"]["title"], "标题A")
+
+    def test_extract_callouts_stops_at_non_blockquote(self):
+        """callout 捕获在遇到非 > 开头行时结束,不误捕获后续引用块。"""
+        from core.reader import extract_callouts
+        body = (
+            "> [!summary] 这是摘要\n"
+            "> 摘要内容\n"
+            "\n"
+            "普通段落\n"
+            "\n"
+            "> 这是普通引用,不是 callout\n"
+            "> 不应被收集"
+        )
+        result = extract_callouts(body)
+        self.assertIn("这是摘要", result)
+        self.assertIn("摘要内容", result)
+        self.assertNotIn("普通引用", result)
+
+    def test_extract_callouts_multiple_callouts(self):
+        """多个 callout 块应分别捕获。"""
+        from core.reader import extract_callouts
+        body = (
+            "> [!summary] 摘要\n"
+            "> 内容\n"
+            "\n"
+            "> [!warning] 警告\n"
+            "> 警告内容"
+        )
+        result = extract_callouts(body)
+        self.assertIn("摘要", result)
+        self.assertIn("警告", result)
+
+
 if __name__ == "__main__":
     unittest.main()

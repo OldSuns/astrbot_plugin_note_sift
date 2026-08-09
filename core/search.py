@@ -224,11 +224,11 @@ def make_snippet(text: str, query: str, max_chars: int, regex: bool = False) -> 
     return text[start:end].strip()
 
 
-def search_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool = False, vault_id: str | None = None, max_discover_snippet_chars: int | None = None) -> list[dict]:
+def _resolve_vault_dirs(data_dir: Path, vault_id: str | None) -> list[Path]:
+    """解析要搜索的 vault 目录列表,vault_id 不存在时抛出 ValueError。"""
     vaults_dir = Path(data_dir) / "vaults"
     if not vaults_dir.exists():
         return []
-
     if vault_id:
         vault_path = vaults_dir / vault_id
         if not vault_path.exists():
@@ -237,12 +237,13 @@ def search_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool
                 f"Knowledge vault '{vault_id}' not found. "
                 f"Available vaults: {', '.join(available) if available else 'none'}"
             )
-        vault_dirs = [vault_path]
-    else:
-        vault_dirs = [d for d in vaults_dir.iterdir() if d.is_dir()]
+        return [vault_path]
+    return [d for d in vaults_dir.iterdir() if d.is_dir()]
 
+
+def search_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool = False, vault_id: str | None = None, max_discover_snippet_chars: int | None = None) -> list[dict]:
     all_results = []
-    for vault_dir in vault_dirs:
+    for vault_dir in _resolve_vault_dirs(data_dir, vault_id):
         current_vault_id = vault_dir.name
         settings_kwargs = {"data_dir": data_dir, "vault_id": current_vault_id}
         if max_discover_snippet_chars is not None:
@@ -260,24 +261,8 @@ def search_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool
 
 
 def grep_across_vaults(data_dir: Path, query: str, limit: int = 5, regex: bool = False, vault_id: str | None = None) -> list[dict]:
-    vaults_dir = Path(data_dir) / "vaults"
-    if not vaults_dir.exists():
-        return []
-
-    if vault_id:
-        vault_path = vaults_dir / vault_id
-        if not vault_path.exists():
-            available = [d.name for d in vaults_dir.iterdir() if d.is_dir()]
-            raise ValueError(
-                f"Knowledge vault '{vault_id}' not found. "
-                f"Available vaults: {', '.join(available) if available else 'none'}"
-            )
-        vault_dirs = [vault_path]
-    else:
-        vault_dirs = [d for d in vaults_dir.iterdir() if d.is_dir()]
-
     all_results = []
-    for vault_dir in vault_dirs:
+    for vault_dir in _resolve_vault_dirs(data_dir, vault_id):
         current_vault_id = vault_dir.name
         settings = VaultSettings(data_dir=data_dir, vault_id=current_vault_id)
         if not settings.index_path.exists():

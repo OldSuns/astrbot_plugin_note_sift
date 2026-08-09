@@ -52,11 +52,17 @@ class VaultImporter:
             # Scan existing files
             notes = []
             file_count = 0
+            ignored_count = 0
+            max_bytes = self.settings.max_file_size_mb * 1024 * 1024
             for file_path in sorted(files_dir.rglob("*")):
                 if not file_path.is_file():
                     continue
                 suffix = file_path.suffix.lower()
                 if suffix not in self.settings.allowed_extensions:
+                    ignored_count += 1
+                    continue
+                if file_path.stat().st_size > max_bytes:
+                    ignored_count += 1
                     continue
                 relative_path = file_path.relative_to(files_dir).as_posix()
                 text = file_path.read_text(encoding="utf-8", errors="replace")
@@ -79,7 +85,7 @@ class VaultImporter:
                 vault_id=self.settings.vault_id,
                 zip_hash="",  # No zip for rebuild
                 file_count=file_count,
-                ignored_count=0,  # Not applicable for rebuild
+                ignored_count=ignored_count,
                 imported_at=imported_at,
                 vault_root="",
             )

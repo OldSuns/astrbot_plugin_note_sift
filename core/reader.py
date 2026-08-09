@@ -131,6 +131,7 @@ def extract_callouts(body: str) -> str:
         if capture and line.startswith(">"):
             collected.append(line)
             continue
+        # 遇到非 > 开头行时结束当前 callout 捕获
         capture = False
     return "\n".join(collected).strip()
 
@@ -163,6 +164,9 @@ def extract_section(body: str, headings: list[dict], heading: str | None) -> str
 
 
 def select_section(body: str, headings: list[dict], heading: str | None) -> dict:
+    # 空字符串视为未指定,与 None 一致
+    if heading is not None and not heading.strip():
+        heading = None
     if not headings:
         if heading:
             return {

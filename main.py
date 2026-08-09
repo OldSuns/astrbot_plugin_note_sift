@@ -686,7 +686,10 @@ class NoteSiftPlugin(Star):
             elif key == "enable_acl":
                 result[key] = bool(value)
             elif key == "allowed_sessions":
-                result[key] = str(value)
+                if isinstance(value, list):
+                    result[key] = [str(item).strip() for item in value if str(item).strip()]
+                else:
+                    result[key] = str(value)
             # 其余未知 key 一律忽略
         return result
 
