@@ -98,8 +98,10 @@ class NoteSiftPlugin(Star):
             yield event.plain_result("当前会话未授权访问知识库。")
             return
         vault_id, search_query = self._parse_vault_query(query)
+        # 配置转换移出 try 块：类型错误不应被误报为“知识库不存在”
+        max_snippet_chars = int(self.config.get("max_discover_snippet_chars", 300))
         try:
-            results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id, max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)))
+            results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id, max_discover_snippet_chars=max_snippet_chars)
         except ValueError as error:
             yield event.plain_result(f"知识库不存在：{error}")
             return
@@ -189,6 +191,8 @@ class NoteSiftPlugin(Star):
 
         # Validate limit parameter
         validated_limit = validate_int_param(limit, default=5, min_val=1, max_val=10)
+        # 配置转换移出 try 块：类型错误不应被误报为 vault not found
+        max_snippet_chars = int(self.config.get("max_discover_snippet_chars", 300))
 
         try:
             results = search_across_vaults(
@@ -197,7 +201,7 @@ class NoteSiftPlugin(Star):
                 limit=validated_limit,
                 regex=bool(regex),
                 vault_id=vault_id or None,
-                max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)),
+                max_discover_snippet_chars=max_snippet_chars,
             )
         except ValueError:
             return format_tool_payload(self._vault_not_found_payload(vault_id))
