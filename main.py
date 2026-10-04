@@ -33,7 +33,7 @@ OVER_LIMIT_STRATEGIES = ("strict", "paged", "compressed")
 _MAX_SESSION_CACHE = 128
 
 
-@register(PLUGIN_NAME, "OldSun", "NoteSift - Grep-first Markdown/Obsidian knowledge base for AstrBot", "0.2.0")
+@register(PLUGIN_NAME, "OldSun", "NoteSift - Grep-first Markdown/Obsidian knowledge base for AstrBot", "0.2.1")
 class NoteSiftPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
