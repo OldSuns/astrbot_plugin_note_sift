@@ -3,7 +3,7 @@ from pathlib import Path
 
 from .config import VaultSettings
 from .index import VaultIndex
-from .search import make_snippet
+from .search import escape_like, make_snippet
 
 
 class VaultReader:
@@ -100,8 +100,8 @@ class VaultReader:
             if row:
                 return row
             return conn.execute(
-                "select * from notes where vault_id = ? and path like ? order by length(path) limit 1",
-                (self.settings.vault_id, f"%{note_ref}%"),
+                "select * from notes where vault_id = ? and path like ? escape '\\' order by length(path) limit 1",
+                (self.settings.vault_id, f"%{escape_like(note_ref)}%"),
             ).fetchone()
         finally:
             conn.close()

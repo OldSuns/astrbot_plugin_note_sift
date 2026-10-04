@@ -15,6 +15,7 @@
   "compressed_section_preview_chars": 200,
   "max_read_chars": 8000,
   "max_discover_snippet_chars": 300,
+  "discover_scan_rows": 500,
   "enable_acl": false,
   "allowed_sessions": "",
   "default_read_mode": "outline"
@@ -128,6 +129,14 @@ plugin_data/astrbot_plugin_note_sift/
 - 仅在搜索命中正文时返回片段
 - 用于快速预览命中内容
 - 不影响实际读取
+
+### discover_scan_rows
+
+搜索/grep 时 SQL 扫描行数上限，大库防护：单次查询命中超过此数时，按元数据得分（标题 > 别名 > 标签 > 路径 > 标题树 > 正文）预排序后只取前 N 行进入最终打分，纯正文（权重最低）的命中可能被裁掉。个人库一般达不到此阈值。
+
+**默认值**：`500`
+
+**类型**：整数（最小 50）
 
 ### default_read_mode
 

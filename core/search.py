@@ -18,8 +18,31 @@ FIELD_WEIGHTS = {
 # 粗粒度 SQL 预过滤扫描的原始存储列（body 含标题行）。
 _LIKE_COLUMNS = ("title", "path", "body", "tags_json", "aliases_json", "headings_json")
 
+# SQL 预排序的元数据得分列（近似启发式：命中即计权重，仅供 LIMIT 前 Ranking；
+# 最终排序仍由 Python 侧 _score_terms/_score_regex 重新打分）。
+_META_SCORE_COLUMNS = (("title", 100), ("aliases_json", 80), ("tags_json", 70), ("path", 60), ("headings_json", 50))
 
-def _escape_like(term: str) -> str:
+
+def _meta_score_sql(terms: list[str] | None, regex_pattern: str | None = None) -> tuple[str, list]:
+    """构造下推元数据得分表达式。返回 (SQL 表达式, 参数列表)。
+
+    参数顺序即 SQL 文本中出现顺序，调用方必须把它放在 WHERE 参数之前绑定。
+    """
+    parts: list[str] = []
+    params: list = []
+    if terms is not None:
+        for term in terms:
+            for col, weight in _META_SCORE_COLUMNS:
+                parts.append(f"case when {col} like ? escape '\\' then {weight} else 0 end")
+                params.append(f"%{escape_like(term)}%")
+    else:
+        for col, weight in _META_SCORE_COLUMNS:
+            parts.append(f"case when {col} regexp ? then {weight} else 0 end")
+            params.append(regex_pattern)
+    return " + ".join(parts), params
+
+
+def escape_like(term: str) -> str:
     """转义 LIKE 通配符，使查询词按字面处理（配合 ESCAPE '\\'）。"""
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -136,23 +159,24 @@ class VaultSearch:
                 re.compile(query)
             except re.error:
                 return []
+        scan_rows = self.settings.discover_scan_rows
         conn = VaultIndex(self.settings.index_path, self.settings.vault_id).connect()
         try:
             if regex:
                 _register_regexp(conn)
                 rows = conn.execute(
-                    "select note_id, path, title, body from notes where vault_id = ? and body regexp ?",
-                    (self.settings.vault_id, query),
+                    "select note_id, path, title, body from notes where vault_id = ? and body regexp ? order by path limit ?",
+                    (self.settings.vault_id, query, scan_rows),
                 ).fetchall()
             else:
                 where = ["vault_id = ?"]
                 params: list = [self.settings.vault_id]
                 for term in query.lower().split():
                     where.append("body LIKE ? ESCAPE '\\'")
-                    params.append(f"%{_escape_like(term)}%")
+                    params.append(f"%{escape_like(term)}%")
                 rows = conn.execute(
-                    f"select note_id, path, title, body from notes where {' AND '.join(where)}",
-                    params,
+                    f"select note_id, path, title, body from notes where {' AND '.join(where)} order by path limit ?",
+                    params + [scan_rows],
                 ).fetchall()
         finally:
             conn.close()
@@ -169,20 +193,58 @@ class VaultSearch:
             )
         return results[:limit]
 
+    def browse(self, folder: str = "", tag: str = "", limit: int = 50) -> list[dict]:
+        """按目录前缀或精确标签列出笔记，无需关键词。"""
+        if not self.settings.index_path.exists():
+            return []
+        where = ["vault_id = ?"]
+        params: list = [self.settings.vault_id]
+        folder = (folder or "").strip().strip("/")
+        if folder:
+            where.append("path like ? escape '\\'")
+            params.append(f"{escape_like(folder)}/%")
+        tag = (tag or "").strip()
+        if tag:
+            # tags_json 是 JSON 数组，带引号的精确元素匹配
+            where.append("tags_json like ? escape '\\'")
+            params.append(f'%"{escape_like(tag)}"%')
+        sql = (
+            "select note_id, path, title, tags_json from notes "
+            f"where {' and '.join(where)} order by path limit ?"
+        )
+        params.append(max(1, limit))
+        conn = VaultIndex(self.settings.index_path, self.settings.vault_id).connect()
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+        return [
+            {
+                "note_id": row["note_id"],
+                "path": row["path"],
+                "title": row["title"],
+                "tags": json.loads(row["tags_json"]),
+            }
+            for row in rows
+        ]
+
     def _fetch_plain_rows(self, terms: list[str]):
         where = ["vault_id = ?"]
         params: list = [self.settings.vault_id]
         for term in terms:
             ors = " OR ".join(f"{col} LIKE ? ESCAPE '\\'" for col in _LIKE_COLUMNS)
             where.append(f"({ors})")
-            params.extend([f"%{_escape_like(term)}%"] * len(_LIKE_COLUMNS))
+            params.extend([f"%{escape_like(term)}%"] * len(_LIKE_COLUMNS))
+        score_expr, score_params = _meta_score_sql(terms=terms)
         sql = (
-            "select note_id, path, title, tags_json, aliases_json, headings_json, body "
-            f"from notes where {' AND '.join(where)}"
+            "select note_id, path, title, tags_json, aliases_json, headings_json, body, "
+            f"{score_expr} as meta_score "
+            f"from notes where {' AND '.join(where)} order by meta_score desc, path limit ?"
         )
+        # 参数按 SQL 文本顺序绑定：SELECT 里的 CASE WHEN 参数在 WHERE 参数之前
         conn = VaultIndex(self.settings.index_path, self.settings.vault_id).connect()
         try:
-            return conn.execute(sql, params).fetchall()
+            return conn.execute(sql, score_params + params + [self.settings.discover_scan_rows]).fetchall()
         finally:
             conn.close()
 
@@ -192,14 +254,17 @@ class VaultSearch:
         except re.error:
             return []
         ors = " OR ".join(f"{col} REGEXP ?" for col in _LIKE_COLUMNS)
+        score_expr, score_params = _meta_score_sql(terms=None, regex_pattern=pattern)
         sql = (
-            "select note_id, path, title, tags_json, aliases_json, headings_json, body "
-            f"from notes where vault_id = ? and ({ors})"
+            "select note_id, path, title, tags_json, aliases_json, headings_json, body, "
+            f"{score_expr} as meta_score "
+            f"from notes where vault_id = ? and ({ors}) order by meta_score desc, path limit ?"
         )
         conn = VaultIndex(self.settings.index_path, self.settings.vault_id).connect()
         try:
             _register_regexp(conn)
-            return conn.execute(sql, [self.settings.vault_id] + [pattern] * len(_LIKE_COLUMNS)).fetchall()
+            bind = score_params + [self.settings.vault_id] + [pattern] * len(_LIKE_COLUMNS) + [self.settings.discover_scan_rows]
+            return conn.execute(sql, bind).fetchall()
         finally:
             conn.close()
 

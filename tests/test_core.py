@@ -681,5 +681,62 @@ This is section B with different content. """ + ("y" * 300)
         self.assertIn("警告", result)
 
 
+class CorrectnessRegressionTest(unittest.TestCase):
+    """阶段1正确性修复的精简回归：围栏标题/双链、LIKE 转义、zip 过滤与封顶。"""
+
+    def setUp(self):
+        self.tmp_path = Path(__file__).parent / ".tmp_correctness"
+        if self.tmp_path.exists():
+            shutil.rmtree(self.tmp_path)
+        self.tmp_path.mkdir(parents=True)
+
+    def tearDown(self):
+        if self.tmp_path.exists():
+            shutil.rmtree(self.tmp_path)
+
+    def test_import_ignores_fenced_code_and_macos_junk(self):
+        zip_path = self.tmp_path / "v.zip"
+        write_zip(
+            zip_path,
+            {
+                "code.md": "# 真\n\n```python\n# 假标题\n[[假链接]]\n```\n\n[[真链接]]\n",
+                "junk.md": "x" * (5 * 1024 * 1024 + 5),
+                "__MACOSX/v/._a.md": "junk",
+                ".DS_Store": "junk",
+                "notes/a.md": "# A\n\n正文",
+            },
+        )
+        settings = VaultSettings(data_dir=self.tmp_path / "data", vault_id="v")
+        manifest = VaultImporter(settings).import_zip(zip_path)
+
+        self.assertEqual(manifest.file_count, 2)
+        self.assertEqual(manifest.ignored_count, 3)
+        files = sorted(p.relative_to(settings.files_dir).as_posix() for p in settings.files_dir.rglob("*") if p.is_file())
+        self.assertEqual(files, ["code.md", "notes/a.md"])
+
+        db = sqlite3.connect(settings.index_path)
+        try:
+            headings = json.loads(
+                db.execute("select headings_json from notes where path = 'code.md'").fetchone()[0]
+            )
+            links = db.execute("select target from links").fetchall()
+        finally:
+            db.close()
+        self.assertEqual([h["title"] for h in headings], ["真"])
+        self.assertEqual(links, [("真链接",)])
+
+    def test_read_note_ref_with_like_wildcard_is_treated_literally(self):
+        zip_path = self.tmp_path / "v.zip"
+        write_zip(zip_path, {"100.md": "# 百分笔记\n\n内容"})
+        settings = VaultSettings(data_dir=self.tmp_path / "data", vault_id="v")
+        VaultImporter(settings).import_zip(zip_path)
+
+        reader = VaultReader(settings)
+        self.assertTrue(reader.read_note("100.md")["found"])
+        # "%" / "_" 必须按字面处理，不能当通配符误命中 100.md
+        self.assertFalse(reader.read_note("10%")["found"])
+        self.assertFalse(reader.read_note("%")["found"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,7 @@ class VaultSettings:
     max_file_size_mb: int = 5
     max_read_chars: int = 8000
     max_discover_snippet_chars: int = 300
+    discover_scan_rows: int = 500
     full_over_limit_strategy: str = "strict"
     compressed_section_preview_chars: int = 200
 

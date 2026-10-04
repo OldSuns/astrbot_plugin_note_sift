@@ -403,6 +403,7 @@ async function loadConfig() {
 
 function populateForm(config) {
   document.getElementById('maxDiscoverSnippetChars').value = config.max_discover_snippet_chars || 300;
+  document.getElementById('discoverScanRows').value = config.discover_scan_rows || 500;
   document.getElementById('defaultReadMode').value = config.default_read_mode || 'outline';
   document.getElementById('maxReadChars').value = config.max_read_chars || 8000;
   document.getElementById('fullOverLimitStrategy').value = config.full_over_limit_strategy || 'strict';
@@ -426,6 +427,7 @@ async function saveConfig() {
   try {
     const config = {
       max_discover_snippet_chars: parseInt(document.getElementById('maxDiscoverSnippetChars').value),
+      discover_scan_rows: parseInt(document.getElementById('discoverScanRows').value),
       default_read_mode: document.getElementById('defaultReadMode').value,
       max_read_chars: parseInt(document.getElementById('maxReadChars').value),
       full_over_limit_strategy: document.getElementById('fullOverLimitStrategy').value,

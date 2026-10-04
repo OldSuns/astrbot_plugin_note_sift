@@ -5,6 +5,28 @@ from dataclasses import dataclass, field
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)?(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]")
+FENCE_OPEN_RE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+
+
+def visible_lines(lines: list[str]):
+    """逐行产出 (行号, 行)，跳过围栏代码块内的行（行号从 1 开始）。
+
+    识别 ``` 与 ~~~ 围栏；闭合围栏须与开启字符相同且长度不小于开启长度。
+    """
+    fence_char = ""
+    fence_len = 0
+    for index, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if fence_char:
+            if len(stripped) >= fence_len and set(stripped) == {fence_char}:
+                fence_char = ""
+            continue
+        match = FENCE_OPEN_RE.match(line)
+        if match:
+            fence_char = match.group(1)[0]
+            fence_len = len(match.group(1))
+            continue
+        yield index, line
 
 
 @dataclass
@@ -97,7 +119,7 @@ def normalize_list(value: object) -> list[str]:
 def extract_headings(body: str) -> list[dict]:
     lines = body.splitlines()
     headings: list[dict] = []
-    for index, line in enumerate(lines, start=1):
+    for index, line in visible_lines(lines):
         match = HEADING_RE.match(line)
         if not match:
             continue
@@ -119,15 +141,16 @@ def extract_headings(body: str) -> list[dict]:
 
 def extract_wikilinks(body: str) -> list[dict]:
     links = []
-    for match in WIKILINK_RE.finditer(body):
-        links.append(
-            {
-                "target": (match.group(1) or "").strip(),
-                "heading": (match.group(2) or "").strip(),
-                "alias": (match.group(3) or "").strip(),
-                "raw": match.group(0),
-            }
-        )
+    for _index, line in visible_lines(body.splitlines()):
+        for match in WIKILINK_RE.finditer(line):
+            links.append(
+                {
+                    "target": (match.group(1) or "").strip(),
+                    "heading": (match.group(2) or "").strip(),
+                    "alias": (match.group(3) or "").strip(),
+                    "raw": match.group(0),
+                }
+            )
     return links
 
 
