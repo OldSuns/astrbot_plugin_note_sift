@@ -30,6 +30,7 @@ PLUGIN_NAME = "astrbot_plugin_note_sift"
 
 READ_MODES = ("outline", "summary", "section", "snippets", "full")
 OVER_LIMIT_STRATEGIES = ("strict", "paged", "compressed")
+_MAX_SESSION_CACHE = 128
 
 
 @register(PLUGIN_NAME, "OldSun", "NoteSift - Grep-first Markdown/Obsidian knowledge base for AstrBot", "0.2.0")
@@ -97,8 +98,12 @@ class NoteSiftPlugin(Star):
             yield event.plain_result("当前会话未授权访问知识库。")
             return
         vault_id, search_query = self._parse_vault_query(query)
-        results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id, max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)))
-        self._last_search_by_session[event.unified_msg_origin] = results
+        try:
+            results = search_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id, max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)))
+        except ValueError as error:
+            yield event.plain_result(f"知识库不存在：{error}")
+            return
+        self._remember_search(event.unified_msg_origin, results)
         yield event.plain_result(render_search_results(results))
 
     @kb.command("read")
@@ -126,7 +131,12 @@ class NoteSiftPlugin(Star):
             return
         vault_id, search_query = self._parse_vault_query(query)
 
-        results = grep_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id)
+        try:
+            results = grep_across_vaults(self.data_dir, search_query, limit=8, vault_id=vault_id)
+        except ValueError as error:
+            yield event.plain_result(f"知识库不存在：{error}")
+            return
+        self._remember_search(event.unified_msg_origin, results)
         yield event.plain_result(render_grep_results(results))
 
     @kb.command("status")
@@ -141,11 +151,7 @@ class NoteSiftPlugin(Star):
     @kb.command("rebuild")
     async def kb_rebuild(self, event: AstrMessageEvent, vault_id: str = ""):
         """管理员命令：从已导入的 files 目录重建指定知识库索引。不指定则重建所有库。"""
-        try:
-            manifests = await self._rebuild_all_vaults(specific_vault=vault_id or None)
-        except ImportErrorInfo as error:
-            yield event.plain_result(f"重建失败：{error}")
-            return
+        manifests = await self._rebuild_all_vaults(specific_vault=vault_id or None)
         if manifests:
             summary = []
             for m in manifests:
@@ -184,14 +190,17 @@ class NoteSiftPlugin(Star):
         # Validate limit parameter
         validated_limit = validate_int_param(limit, default=5, min_val=1, max_val=10)
 
-        results = search_across_vaults(
-            self.data_dir,
-            query,
-            limit=validated_limit,
-            regex=bool(regex),
-            vault_id=vault_id or None,
-            max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)),
-        )
+        try:
+            results = search_across_vaults(
+                self.data_dir,
+                query,
+                limit=validated_limit,
+                regex=bool(regex),
+                vault_id=vault_id or None,
+                max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)),
+            )
+        except ValueError:
+            return format_tool_payload(self._vault_not_found_payload(vault_id))
         return format_tool_payload({"results": format_discover_results(results, verbose=bool(verbose))})
 
     @filter.llm_tool(name="kb_read")
@@ -210,6 +219,9 @@ class NoteSiftPlugin(Star):
         """
         if not self._is_allowed(event):
             return "Knowledge vault access denied for this session."
+
+        if vault_id and vault_id not in self._available_vault_ids():
+            return format_tool_payload(self._vault_not_found_payload(vault_id))
 
         # Validate page parameter
         validated_page = validate_int_param(page, default=1, min_val=1)
@@ -231,13 +243,16 @@ class NoteSiftPlugin(Star):
         reader = VaultReader(settings)
 
         read_mode = mode or "outline"
-        result = reader.read_note(
-            note_ref,
-            mode=read_mode,
-            heading=heading or None,
-            query=query or None,
-            page=validated_page
-        )
+        try:
+            result = reader.read_note(
+                note_ref,
+                mode=read_mode,
+                heading=heading or None,
+                query=query or None,
+                page=validated_page
+            )
+        except ValueError:
+            return format_tool_payload(self._vault_not_found_payload(target_vault))
         if result.get("found"):
             result["vault_id"] = target_vault
         return format_tool_payload(format_read_result(result, target_vault, read_mode, verbose=bool(verbose)))
@@ -253,6 +268,9 @@ class NoteSiftPlugin(Star):
         if not self._is_allowed(event):
             return "Knowledge vault access denied for this session."
 
+        if vault_id and vault_id not in self._available_vault_ids():
+            return format_tool_payload(self._vault_not_found_payload(vault_id))
+
         target_vault, note_ref, candidates = self._resolve_read_target(note_ref, vault_id)
         if not target_vault:
             if candidates:
@@ -262,12 +280,52 @@ class NoteSiftPlugin(Star):
             return format_tool_payload({"found": False, "error": "note not found"})
 
         settings = self._build_settings(target_vault)
-        resolved = VaultReader(settings).read_note(note_ref, mode="outline")
+        try:
+            resolved = VaultReader(settings).read_note(note_ref, mode="outline")
+        except ValueError:
+            return format_tool_payload(self._vault_not_found_payload(target_vault))
         if not resolved.get("found"):
             return format_tool_payload({"found": False, "error": "note not found"})
 
         related = find_related(settings, resolved["note_id"])
         return format_tool_payload(related)
+
+    @filter.llm_tool(name="kb_browse")
+    async def kb_browse(self, event: AstrMessageEvent, vault_id: str = "", folder: str = "", tag: str = "", limit: int = 50) -> str:
+        """按目录或标签浏览知识库的笔记列表，无需关键词。适合「列出某章节/目录下的所有笔记」这类学习场景。
+
+        Args:
+            vault_id(string): 必填。提示：先使用 kb_list_vaults 工具获取可用的知识库 ID
+            folder(string): 目录前缀过滤，如 "第3章" 或 "儿科学/川崎病"；留空则列出全库
+            tag(string): 精确标签过滤，需与笔记 frontmatter 中的 tag 完全一致；留空则不过滤
+            limit(number): 最多返回条数，默认 50，最大 100
+        """
+        if not self._is_allowed(event):
+            return "Knowledge vault access denied for this session."
+
+        validated_limit = validate_int_param(limit, default=50, min_val=1, max_val=100)
+
+        if not vault_id.strip():
+            return format_tool_payload(
+                {
+                    "found": False,
+                    "error": "vault_id required",
+                    "next_action_hint": "请先使用 kb_list_vaults 获取可用的知识库 ID。",
+                }
+            )
+        if vault_id not in self._available_vault_ids():
+            return format_tool_payload(self._vault_not_found_payload(vault_id))
+
+        settings = self._build_settings(vault_id)
+        notes = VaultSearch(settings).browse(folder=folder, tag=tag, limit=validated_limit)
+        return format_tool_payload(
+            {
+                "found": True,
+                "vault_id": vault_id,
+                "count": len(notes),
+                "notes": notes,
+            }
+        )
 
     def _build_settings(self, vault_id: str = "default") -> VaultSettings:
         return VaultSettings(
@@ -275,6 +333,7 @@ class NoteSiftPlugin(Star):
             vault_id=vault_id,
             max_read_chars=int(self.config.get("max_read_chars", 8000)),
             max_discover_snippet_chars=int(self.config.get("max_discover_snippet_chars", 300)),
+            discover_scan_rows=int(self.config.get("discover_scan_rows", 500)),
             full_over_limit_strategy=str(self.config.get("full_over_limit_strategy", "strict")),
             compressed_section_preview_chars=int(self.config.get("compressed_section_preview_chars", 200)),
         )
@@ -316,21 +375,26 @@ class NoteSiftPlugin(Star):
             if not zip_path_str:
                 continue
 
-            if specific_vault and vault_id != specific_vault:
-                continue
-
             # Convert relative path to absolute (relative to data_dir)
             zip_path = Path(zip_path_str)
             if not zip_path.is_absolute():
                 zip_path = self.data_dir / zip_path_str
 
-            if not zip_path.exists():
-                logger.warning(f"Vault zip not found: {zip_path}")
-                continue
-
             # Auto-generate vault_id from filename if not provided
             if not vault_id:
                 vault_id = extract_vault_id_from_path(zip_path)
+
+            if specific_vault and vault_id != specific_vault:
+                continue
+
+            if not zip_path.exists():
+                # 已导入过的库（manifest 或 files 目录在）不告警，仅记录 info
+                probe = self._build_settings(vault_id)
+                if probe.manifest_path.exists() or probe.files_dir.exists():
+                    logger.info(f"Vault '{vault_id}' already imported; skip missing zip: {zip_path}")
+                else:
+                    logger.warning(f"Vault zip not found: {zip_path}")
+                continue
 
             settings = self._build_settings(vault_id)
             try:
@@ -377,11 +441,40 @@ class NoteSiftPlugin(Star):
         return manifests
 
     def _parse_vault_query(self, query: str) -> tuple[str | None, str]:
-        """Parse 'vault_id:query' format. Returns (vault_id, query)."""
+        """Parse 'vault_id:query' format. Returns (vault_id, query).
+
+        仅当前缀是真实存在的库时才拆分；否则整串视为查询词
+        （避免 "12:30" 这类含冒号的普通查询被误拆后报库不存在）。
+        """
         if ":" in query:
             parts = query.split(":", 1)
-            return parts[0], parts[1]
+            if parts[0] in self._available_vault_ids():
+                return parts[0], parts[1]
         return None, query
+
+    def _remember_search(self, umo: str, results: list[dict[str, Any]]) -> None:
+        """记录会话最近一次搜索/grep 结果，供 /kb read <编号> 引用；最多保留 128 个会话。"""
+        cache = self._last_search_by_session
+        cache.pop(umo, None)
+        if len(cache) >= _MAX_SESSION_CACHE:
+            cache.pop(next(iter(cache)))
+        cache[umo] = results
+
+    def _available_vault_ids(self) -> set[str]:
+        """列出 data_dir/vaults 下真实存在的库目录名。"""
+        vaults_dir = self.data_dir / "vaults"
+        if not vaults_dir.exists():
+            return set()
+        return {d.name for d in vaults_dir.iterdir() if d.is_dir()}
+
+    def _vault_not_found_payload(self, requested_vault_id: str) -> dict[str, Any]:
+        return {
+            "found": False,
+            "error": "vault not found",
+            "requested_vault_id": requested_vault_id,
+            "available_vaults": sorted(self._available_vault_ids()),
+            "next_action_hint": "使用 kb_list_vaults 获取可用的知识库 ID。",
+        }
 
     def _is_allowed(self, event: AstrMessageEvent) -> bool:
         if not bool(self.config.get("enable_acl", False)):
@@ -391,10 +484,11 @@ class NoteSiftPlugin(Star):
 
     def _resolve_note_ref(self, umo: str, note_ref: str) -> tuple[str, str]:
         """Resolve note reference. Returns (vault_id, note_ref)."""
-        # Check for vault_id:ref format
+        # Check for vault_id:ref format（仅当前缀是真实存在的库）
         if ":" in note_ref:
             parts = note_ref.split(":", 1)
-            return parts[0], parts[1]
+            if parts[0] in self._available_vault_ids():
+                return parts[0], parts[1]
 
         # Check if it's a search result number
         if note_ref.isdigit():
@@ -414,7 +508,8 @@ class NoteSiftPlugin(Star):
         """
         if ":" in note_ref and not vault_id:
             parts = note_ref.split(":", 1)
-            return parts[0], parts[1], []
+            if parts[0] in self._available_vault_ids():
+                return parts[0], parts[1], []
         if vault_id:
             return vault_id, note_ref, []
 
@@ -675,6 +770,14 @@ class NoteSiftPlugin(Star):
                 if parsed <= 0:
                     raise ValueError(f"{key} 必须为正整数")
                 result[key] = parsed
+            elif key == "discover_scan_rows":
+                try:
+                    parsed = int(value)
+                except (TypeError, ValueError):
+                    raise ValueError("discover_scan_rows 必须为整数")
+                if parsed < 50:
+                    raise ValueError("discover_scan_rows 不能低于 50")
+                result[key] = parsed
             elif key == "default_read_mode":
                 if value not in READ_MODES:
                     raise ValueError(f"default_read_mode 必须是 {READ_MODES} 之一")
@@ -704,6 +807,7 @@ class NoteSiftPlugin(Star):
                 "max_read_chars": self.config.get("max_read_chars", 8000),
                 "full_over_limit_strategy": self.config.get("full_over_limit_strategy", "strict"),
                 "compressed_section_preview_chars": self.config.get("compressed_section_preview_chars", 200),
+                "discover_scan_rows": self.config.get("discover_scan_rows", 500),
                 "enable_acl": self.config.get("enable_acl", False),
                 "allowed_sessions": self.config.get("allowed_sessions", "")
             }
@@ -757,7 +861,13 @@ def render_search_results(results: list[dict[str, Any]]) -> str:
 
 def render_read_result(result: dict[str, Any]) -> str:
     if not result.get("found"):
-        return f"读取失败：{result.get('error', 'not found')}"
+        error = result.get("error", "not found")
+        if error == "heading not found" and result.get("available_headings"):
+            lines = [f"读取失败：未找到标题「{result.get('requested_heading', '')}」", "可用标题："]
+            for heading in result["available_headings"]:
+                lines.append(f"{'  ' * max(0, heading['level'] - 1)}- {heading['title']}")
+            return "\n".join(lines)
+        return f"读取失败：{error}"
     lines = [f"# {result['title']}", result["path"]]
     if result.get("tags"):
         lines.append(f"tags: {', '.join(result['tags'])}")
@@ -904,7 +1014,7 @@ def imported_at_from_import_id(import_id: Any) -> str | None:
     return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).replace(microsecond=0).isoformat()
 
 
-def validate_int_param(value: Any, default: int, min_val: int = None, max_val: int = None) -> int:
+def validate_int_param(value: Any, default: int, min_val: int | None = None, max_val: int | None = None) -> int:
     """Validate and sanitize integer parameters from LLM tool calls.
 
     Args:

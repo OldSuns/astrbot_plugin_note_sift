@@ -138,6 +138,11 @@
               <input type="number" id="maxDiscoverSnippetChars" name="max_discover_snippet_chars" min="100" max="1000">
               <small>搜索结果中显示的正文片段长度</small>
             </div>
+            <div class="form-group">
+              <label for="discoverScanRows">搜索扫描行数上限</label>
+              <input type="number" id="discoverScanRows" name="discover_scan_rows" min="50" max="100000">
+              <small>大库防护：命中超过此数时，低权重的正文命中可能被裁掉</small>
+            </div>
           </div>
 
           <div class="form-section">

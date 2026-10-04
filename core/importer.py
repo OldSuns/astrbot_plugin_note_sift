@@ -17,6 +17,31 @@ class ImportErrorInfo(Exception):
     pass
 
 
+_MAX_TOTAL_EXTRACT_BYTES = 1024 * 1024 * 1024
+_EXTRACT_CHUNK = 1024 * 1024
+
+
+def _is_junk_zip_path(path: PurePosixPath) -> bool:
+    """macOS 压缩产物的垃圾条目：__MACOSX 目录、.DS_Store、._ 开头的 AppleDouble 文件。"""
+    return any(
+        part == "__MACOSX" or part == ".DS_Store" or part.startswith("._")
+        for part in path.parts
+    )
+
+
+def _copy_with_cap(source, output, max_bytes: int) -> int:
+    """流式拷贝，返回实际写入字节数；超过 max_bytes 返回 -1（半成品文件由调用方清理）。"""
+    written = 0
+    while True:
+        chunk = source.read(_EXTRACT_CHUNK)
+        if not chunk:
+            return written
+        written += len(chunk)
+        if written > max_bytes:
+            return -1
+        output.write(chunk)
+
+
 @dataclass
 class ImportManifest:
     import_id: str
@@ -167,6 +192,8 @@ class VaultImporter:
     def _extract_zip(self, zip_path: Path, destination: Path, vault_root: str = "") -> tuple[int, int]:
         file_count = 0
         ignored_count = 0
+        total_bytes = 0
+        max_bytes = self.settings.max_file_size_mb * 1024 * 1024
         with zipfile.ZipFile(zip_path) as archive:
             for info in archive.infolist():
                 if info.is_dir():
@@ -181,17 +208,29 @@ class VaultImporter:
                     # Strip vault_root prefix from path
                     relative = PurePosixPath(*relative.parts[len(PurePosixPath(vault_root).parts):])
 
+                if _is_junk_zip_path(relative):
+                    ignored_count += 1
+                    continue
+
                 suffix = Path(relative.name).suffix.lower()
                 if suffix not in self.settings.allowed_extensions:
                     ignored_count += 1
                     continue
-                if info.file_size > self.settings.max_file_size_mb * 1024 * 1024:
+                # 声明值预检（快速路径）；实际解压字节数在拷贝时二次封顶
+                if info.file_size > max_bytes:
                     ignored_count += 1
                     continue
                 target = destination / relative.as_posix()
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(info) as source, target.open("wb") as output:
-                    shutil.copyfileobj(source, output)
+                    written = _copy_with_cap(source, output, max_bytes)
+                if written < 0:
+                    target.unlink(missing_ok=True)
+                    ignored_count += 1
+                    continue
+                total_bytes += written
+                if total_bytes > _MAX_TOTAL_EXTRACT_BYTES:
+                    raise ImportErrorInfo("zip 解压总量超过上限 (1 GiB)")
                 file_count += 1
         return file_count, ignored_count
 

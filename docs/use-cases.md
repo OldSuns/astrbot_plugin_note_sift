@@ -364,13 +364,13 @@ for note in notes:
 **3. 草稿管理**
 
 ```python
-# 查看所有草稿
-drafts = kb_discover("", vault_id="drafts")
+# 列出草稿库的全部笔记（浏览无需关键词）
+drafts = kb_browse(vault_id="drafts")
 
-# 使用 compressed 模式快速预览
-for draft in drafts:
-    preview = kb_read(draft["note_id"], mode="full")
-    # 查看结构和要点
+# 逐篇读取草稿（full 模式；若正文超过 max_read_chars 且策略为 compressed，
+# 会返回「标题+各节预览」的骨架，适合快速扫一遍）
+for draft in drafts["notes"]:
+    preview = kb_read(draft["note_id"], mode="full", vault_id="drafts")
 ```
 
 ### 提示

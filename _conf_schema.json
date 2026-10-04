@@ -41,5 +41,10 @@
     "type": "int",
     "description": "搜索片段最大字符数",
     "default": 300
+  },
+  "discover_scan_rows": {
+    "type": "int",
+    "description": "搜索扫描行数上限（大库防护；命中超过此数时低权重正文命中可能被裁掉）",
+    "default": 500
   }
 }

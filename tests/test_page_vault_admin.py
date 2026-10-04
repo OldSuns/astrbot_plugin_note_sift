@@ -323,6 +323,37 @@ class PageVaultAdminTest(unittest.TestCase):
         self.assertIn("B", out_titles)
         self.assertIn("B", back_titles)
 
+    def test_kb_discover_unknown_vault_returns_structured_error(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(zip_path, {"a.md": "# A\n\n"})
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        result = self._run_async(plugin.kb_discover(event, query="牙髓", vault_id="ghost"))
+
+        payload = json.loads(result)
+        self.assertFalse(payload["found"])
+        self.assertEqual(payload["error"], "vault not found")
+        self.assertEqual(payload["requested_vault_id"], "ghost")
+        self.assertEqual(payload["available_vaults"], ["临床医学"])
+
+    def test_parse_vault_query_treats_unknown_colon_prefix_as_plain_query(self):
+        plugin = self._make_plugin()
+        zip_path = self.tmp_path / "medical.zip"
+        self._write_zip(zip_path, {"a.md": "# A\n\n"})
+        settings = self.module.VaultSettings(data_dir=plugin.data_dir, vault_id="临床医学")
+        self.module.VaultImporter(settings).import_zip(zip_path)
+
+        vault_id, query = plugin._parse_vault_query("12:30 复习")
+        self.assertIsNone(vault_id)
+        self.assertEqual(query, "12:30 复习")
+
+        vault_id, query = plugin._parse_vault_query("临床医学:川崎病")
+        self.assertEqual(vault_id, "临床医学")
+        self.assertEqual(query, "川崎病")
+
     def test_page_config_post_ignores_unknown_keys(self):
         plugin = self._make_plugin(config={})
         sanitized = plugin._sanitize_config_update(

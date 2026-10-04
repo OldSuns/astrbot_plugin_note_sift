@@ -14,7 +14,7 @@
 |------|------|
 | [命令使用](docs/commands.md) | `/kb search`、`/kb read`、`/kb grep`、`/kb status`、`/kb rebuild` |
 | [配置指南](docs/configuration.md) | 配置项、数据目录、ACL、导入与读取参数 |
-| [LLM 工具接口](docs/llm-tools.md) | `kb_discover`、`kb_read` 的参数、输出与调用建议 |
+| [LLM 工具接口](docs/llm-tools.md) | `kb_discover`、`kb_browse`、`kb_read` 的参数、输出与调用建议 |
 | [多知识库](docs/multi-vault.md) | 多 vault 架构、`vault_id`、跨库搜索与管理 |
 | [读取模式](docs/read-modes.md) | `outline`、`summary`、`section`、`snippets`、`full` |
 | [使用场景](docs/use-cases.md) | 常见工作流和最佳实践示例 |
@@ -34,7 +34,7 @@
   - `section` — 按标题读取指定章节
   - `snippets` — 查询相关正文片段
   - `full` — 完整正文（支持 strict/paged/compressed 三种超限策略）
-- **LLM 工具** — 提供 `kb_list_vaults`、`kb_discover`、`kb_read` 和 `kb_related` 函数工具
+- **LLM 工具** — 提供 `kb_list_vaults`、`kb_discover`、`kb_browse`、`kb_read` 和 `kb_related` 函数工具
 - **跨库搜索** — 单次搜索覆盖所有或指定知识库
 - **Obsidian 自动识别** — 自动检测 `.obsidian` 目录并提取 vault 根路径
 - **前置元数据解析** — 自动提取 tags、aliases，并解析双链供 `kb_related` 查询

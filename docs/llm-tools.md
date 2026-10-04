@@ -7,8 +7,13 @@
 NoteSift 提供以下 LLM 工具：
 - `kb_list_vaults` - 列出可用知识库及其 vault_id
 - `kb_discover` - 搜索发现候选笔记
+- `kb_browse` - 按目录或标签浏览笔记列表（无需关键词）
 - `kb_read` - 读取笔记内容
 - `kb_related` - 查看笔记的双链关系（backlinks / outlinks）
+
+所有需要 `vault_id` 的工具在传入不存在的库时会返回结构化错误：
+`{"found": false, "error": "vault not found", "requested_vault_id": "...", "available_vaults": [...], "next_action_hint": "使用 kb_list_vaults 获取可用的知识库 ID。"}`，
+可据此自行纠正后重试。
 
 ## kb_discover
 
@@ -372,6 +377,48 @@ source = result.get("source_ref")
 # 格式：path#title
 # 可用于回答时注明来源
 ```
+
+## kb_browse
+
+按目录前缀或精确标签列出笔记，无需关键词。适合「列出某章节/目录下的所有笔记」这类浏览式学习场景：先 browse 摸清库结构，再用 `kb_read` 精读。
+
+### 函数签名
+
+```python
+kb_browse(
+    vault_id: str = "",   # 必填：知识库 ID（先用 kb_list_vaults 获取）
+    folder: str = "",     # 目录前缀过滤，如 "第3章"；留空列出全库
+    tag: str = "",        # 精确标签过滤，需与 frontmatter tag 完全一致
+    limit: int = 50       # 最多返回条数（1-100）
+)
+```
+
+### 返回格式
+
+```json
+{
+  "found": true,
+  "vault_id": "medical",
+  "count": 2,
+  "notes": [
+    {"note_id": "...", "path": "儿科学/川崎病.md", "title": "川崎病", "tags": ["儿科学"]},
+    {"note_id": "...", "path": "儿科学/发热.md", "title": "发热鉴别", "tags": ["儿科学", "急症"]}
+  ]
+}
+```
+
+### 使用示例
+
+```python
+# 列出某章节目录下的全部笔记，再逐篇读大纲
+for note in kb_browse(vault_id="medical", folder="儿科学")["notes"]:
+    kb_read(note["note_id"], mode="outline", vault_id="medical")
+
+# 按标签拉清单
+kb_browse(vault_id="medical", tag="急症")
+```
+
+留空 `vault_id` 会返回 `{"found": false, "error": "vault_id required"}`，不会跨库倾倒全部笔记。
 
 ## kb_related
 
